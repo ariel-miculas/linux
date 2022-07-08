@@ -55,6 +55,31 @@ const DIR_FOPS: file::Ops<RoFs> = file::Ops::new::<RoFs>();
 const DIR_IOPS: inode::Ops<RoFs> = inode::Ops::new::<RoFs>();
 const FILE_AOPS: address_space::Ops<RoFs> = address_space::Ops::new::<RoFs>();
 
+#[vtable]
+impl fs::Context<Self> for RoFs {
+    type Data = ();
+
+    kernel::define_fs_params! {(),
+        {flag, "flag", |_, v| { pr_info!("flag passed-in: {v}\n"); Ok(()) } },
+        {flag_no, "flagno", |_, v| { pr_info!("flagno passed-in: {v}\n"); Ok(()) } },
+        {bool, "bool", |_, v| { pr_info!("bool passed-in: {v}\n"); Ok(()) } },
+        {u32, "u32", |_, v| { pr_info!("u32 passed-in: {v}\n"); Ok(()) } },
+        {u32oct, "u32oct", |_, v| { pr_info!("u32oct passed-in: {v}\n"); Ok(()) } },
+        {u32hex, "u32hex", |_, v| { pr_info!("u32hex passed-in: {v}\n"); Ok(()) } },
+        {s32, "s32", |_, v| { pr_info!("s32 passed-in: {v}\n"); Ok(()) } },
+        {u64, "u64", |_, v| { pr_info!("u64 passed-in: {v}\n"); Ok(()) } },
+        {string, "string", |_, v| { pr_info!("string passed-in: {v}\n"); Ok(()) } },
+        {enum, "enum", [("first", 10), ("second", 20)], |_, v| {
+            pr_info!("enum passed-in: {v}\n"); Ok(()) }
+        },
+    }
+
+    fn try_new() -> Result {
+        pr_info!("context created!\n");
+        Ok(())
+    }
+}
+
 struct RoFs;
 
 impl RoFs {
@@ -103,11 +128,12 @@ impl RoFs {
 }
 
 impl fs::FileSystem for RoFs {
+    type Context = Self;
     type Data = ();
     type INodeData = &'static Entry;
     const NAME: &'static CStr = c_str!("rust_rofs");
 
-    fn super_params(_sb: &sb::SuperBlock<Self, sb::New>) -> Result<sb::Params<()>> {
+    fn super_params(_data: (), _sb: &sb::SuperBlock<Self, sb::New>) -> Result<sb::Params<()>> {
         Ok(sb::Params {
             magic: 0x52555354,
             blocksize_bits: 12,

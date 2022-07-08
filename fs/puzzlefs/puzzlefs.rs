@@ -102,7 +102,10 @@ impl fs::FileSystem for PuzzleFsModule {
     type INodeData = Inode;
     const NAME: &'static CStr = c_str!("puzzlefs");
 
-    fn super_params(_sb: &sb::SuperBlock<Self, sb::New>) -> Result<sb::Params<Box<PuzzleFS>>> {
+    fn super_params(
+        _data: (),
+        _sb: &sb::SuperBlock<Self, sb::New>,
+    ) -> Result<sb::Params<Box<PuzzleFS>>> {
         let puzzlefs = PuzzleFS::open(
             c_str!("/home/puzzlefs_xattr"),
             c_str!("ed63ace21eccceabab08d89afb75e94dae47973f82a17a172396a19ea953c8ab"),
