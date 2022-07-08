@@ -103,6 +103,7 @@ impl fs::FileSystem for PuzzleFsModule {
     const NAME: &'static CStr = c_str!("puzzlefs");
 
     fn fill_super(
+        _data: (),
         sb: &mut sb::SuperBlock<Self, sb::New>,
         _: Option<inode::Mapper>,
     ) -> Result<Box<PuzzleFS>> {
