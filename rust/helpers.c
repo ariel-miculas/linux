@@ -156,6 +156,15 @@ void rust_helper_lockdep_unregister_key(struct lock_class_key *key)
 }
 EXPORT_SYMBOL_GPL(rust_helper_lockdep_unregister_key);
 
+int rust_helper_fs_parse(struct fs_context *fc,
+		const struct fs_parameter_spec *desc,
+		struct fs_parameter *param,
+		struct fs_parse_result *result)
+{
+	return fs_parse(fc, desc, param, result);
+}
+EXPORT_SYMBOL_GPL(rust_helper_fs_parse);
+
 /*
  * We use `bindgen`'s `--size_t-is-usize` option to bind the C `size_t` type
  * as the Rust `usize` type, so we can use it in contexts where Rust
