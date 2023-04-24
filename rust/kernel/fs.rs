@@ -1278,7 +1278,7 @@ pub struct Module<T: Type> {
 }
 
 impl<T: Type + Sync> crate::Module for Module<T> {
-    fn init(_name: &'static CStr, module: &'static ThisModule) -> Result<Self> {
+    fn init(module: &'static ThisModule) -> Result<Self> {
         let mut reg = Pin::from(Box::try_new(Registration::new())?);
         reg.as_mut().register::<T>(module)?;
         Ok(Self {
