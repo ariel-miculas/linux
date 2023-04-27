@@ -40,6 +40,16 @@ config SAMPLE_RUST_FS
 
 	  If unsure, say N.
 
+config SAMPLE_PUZZLEFS
+	tristate "Puzzlefs file system"
+	help
+	  This option builds the Rust puzzlefs file system sample.
+
+	  To compile this as a module, choose M here:
+	  the module will be called puzzlefs.
+
+	  If unsure, say N.
+
 config SAMPLE_RUST_HOSTPROGS
 	bool "Host programs"
 	help
