@@ -457,9 +457,15 @@ impl<A: OpenAdapter<T::OpenData>, T: Operations> OperationsVtable<A, T> {
             // `fileref` never outlives this function, so it is guaranteed to be
             // valid.
             let fileref = unsafe { File::from_ptr(file) };
+
+            // SAFETY: into_foreign was called in fs::NewSuperBlock<..., NeedsInit>::init and
+            // it is valid until from_foreign will be called in fs::Tables::free_callback
+            let fs_info =
+                unsafe { <T::Filesystem as fs::Type>::Data::borrow((*(*inode).i_sb).s_fs_info) };
+
             // SAFETY: `arg` was previously returned by `A::convert` and must
             // be a valid non-null pointer.
-            let ptr = T::open(unsafe { &*arg }, fileref)?.into_foreign();
+            let ptr = T::open(fs_info, unsafe { &*arg }, fileref)?.into_foreign();
             // SAFETY: The C contract guarantees that `private_data` is available
             // for implementers of the file operations (no other C code accesses
             // it), so we know that there are no concurrent threads/CPUs accessing
@@ -930,10 +936,17 @@ pub trait Operations {
     /// The type of the context data passed to [`Operations::open`].
     type OpenData: Sync = ();
 
+    /// Data associated with each file system instance.
+    type Filesystem: fs::Type;
+
     /// Creates a new instance of this file.
     ///
     /// Corresponds to the `open` function pointer in `struct file_operations`.
-    fn open(context: &Self::OpenData, file: &File) -> Result<Self::Data>;
+    fn open(
+        fs_info: <<Self::Filesystem as fs::Type>::Data as ForeignOwnable>::Borrowed<'_>,
+        context: &Self::OpenData,
+        file: &File,
+    ) -> Result<Self::Data>;
 
     /// Cleans up after the last reference to the file goes away.
     ///
