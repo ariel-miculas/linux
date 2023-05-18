@@ -12,6 +12,7 @@
 #include <linux/errname.h>
 #include <linux/fs.h>
 #include <linux/fs_context.h>
+#include <linux/namei.h>
 #include <linux/slab.h>
 #include <linux/statfs.h>
 #include <linux/pagemap.h>
