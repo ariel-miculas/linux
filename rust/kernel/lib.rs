@@ -43,6 +43,7 @@ pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
 pub mod mem_cache;
+pub mod mount;
 pub mod prelude;
 pub mod print;
 mod static_assert;
