@@ -16,6 +16,7 @@
 #include <linux/iomap.h>
 #include <linux/jiffies.h>
 #include <linux/mdio.h>
+#include <linux/namei.h>
 #include <linux/pagemap.h>
 #include <linux/phy.h>
 #include <linux/refcount.h>
