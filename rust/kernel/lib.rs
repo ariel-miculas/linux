@@ -46,6 +46,7 @@ pub mod io_buffer;
 pub mod ioctl;
 pub mod iov_iter;
 pub mod mm;
+pub mod mount;
 pub mod pages;
 pub mod prelude;
 pub mod print;
