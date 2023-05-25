@@ -643,6 +643,16 @@ impl<T> Vec<T> {
     pub unsafe fn from_raw_parts(ptr: *mut T, length: usize, capacity: usize) -> Self {
         unsafe { Self::from_raw_parts_in(ptr, length, capacity, Global) }
     }
+
+    /// See https://doc.rust-lang.org/std/vec/struct.Vec.html#examples-31
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn from_iter_fallible(iter: impl Iterator<Item=T>) -> Result<Vec<T>, TryReserveError> {
+        let mut vec = Vec::new();
+        for value in iter {
+            vec.try_push(value)?;
+        }
+        Ok(vec)
+    }
 }
 
 impl<T, A: Allocator> Vec<T, A> {
