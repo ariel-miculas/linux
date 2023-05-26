@@ -2499,6 +2499,15 @@ impl<T, A: Allocator> Vec<T, A> {
     }
 }
 
+impl<T: Clone> Vec<T> {
+    /// Try to clone the vector using the global allocator
+    #[inline]
+    #[stable(feature = "kernel", since = "1.0.0")]
+    pub fn try_clone(&self) -> Result<Self, TryReserveError> {
+        self.try_clone_in(Global)
+    }
+}
+
 impl<T: Clone, A: Allocator> Vec<T, A> {
     /// Resizes the `Vec` in-place so that `len` is equal to `new_len`.
     ///
@@ -2621,6 +2630,14 @@ impl<T: Clone, A: Allocator> Vec<T, A> {
     #[stable(feature = "kernel", since = "1.0.0")]
     pub fn try_extend_from_slice(&mut self, other: &[T]) -> Result<(), TryReserveError> {
         self.try_spec_extend(other.iter())
+    }
+
+    /// Tries to clone the vector using the given allocator
+    #[stable(feature = "kernel", since = "1.0.0")]
+    pub fn try_clone_in(&self, allocator: A) -> Result<Self, TryReserveError> {
+        let mut new_vec = Vec::try_with_capacity_in(self.len(), allocator)?;
+        new_vec.try_extend_from_slice(&self)?;
+        Ok(new_vec)
     }
 
     /// Copies elements from `src` range to the end of the vector.

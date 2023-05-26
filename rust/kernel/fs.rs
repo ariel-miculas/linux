@@ -781,7 +781,9 @@ impl SuperParams {
 ///
 /// The superblock is a newly-created one and this is the only active pointer to it.
 pub struct NewSuperBlock<'a, T: Type + ?Sized, S = NeedsInit> {
-    sb: &'a mut SuperBlock<T>,
+    /// Pointer to the superblock; this fields is public so puzzlefs can call
+    /// try_new_dcache_dir_inode when populating the directory hierarchy
+    pub sb: &'a mut SuperBlock<T>,
 
     // This also forces `'a` to be invariant.
     _p: PhantomData<&'a mut &'a S>,
