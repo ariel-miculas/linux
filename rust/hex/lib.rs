@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0 OR MIT
+
 // Copyright (c) 2013-2014 The Rust Project Developers.
 // Copyright (c) 2015-2020 The rust-hex Developers.
 //
