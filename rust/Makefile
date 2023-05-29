@@ -78,7 +78,9 @@ hex-skip_flags := \
 
 hex-flags := \
     --edition=2018 \
-    -Amissing_docs
+    -Amissing_docs \
+    --cfg 'feature="kernel"' \
+    --extern alloc
 
 quiet_cmd_rustdoc = RUSTDOC $(if $(rustdoc_host),H, ) $<
       cmd_rustdoc = \
