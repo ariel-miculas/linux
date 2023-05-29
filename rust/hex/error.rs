@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
+#[cfg(feature = "kernel")]
+use alloc::collections::TryReserveError;
 use core::fmt;
 
 /// The error type for decoding a hex string into `Vec<u8>` or `[u8; N]`.
@@ -17,6 +19,10 @@ pub enum FromHexError {
     /// array, the hex string's length * 2 has to match the container's
     /// length.
     InvalidStringLength,
+
+    #[cfg(feature = "kernel")]
+    /// If an allocation fails, useful in the kernel context
+    TryReserveError,
 }
 
 #[cfg(feature = "std")]
@@ -30,7 +36,18 @@ impl fmt::Display for FromHexError {
             }
             FromHexError::OddLength => write!(f, "Odd number of digits"),
             FromHexError::InvalidStringLength => write!(f, "Invalid string length"),
+            #[cfg(feature = "kernel")]
+            FromHexError::TryReserveError => write!(f, "TryReserveError"),
         }
+    }
+}
+
+#[cfg(feature = "kernel")]
+#[allow(unused_qualifications)]
+impl core::convert::From<TryReserveError> for FromHexError {
+    #[allow(deprecated)]
+    fn from(_source: TryReserveError) -> Self {
+        FromHexError::TryReserveError
     }
 }
 
