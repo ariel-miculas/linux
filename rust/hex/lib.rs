@@ -59,43 +59,18 @@ pub use crate::serde::deserialize;
 #[cfg(all(feature = "alloc", feature = "serde"))]
 pub use crate::serde::{serialize, serialize_upper};
 
-/// Encoding values as hex string.
-///
-/// This trait is implemented for all `T` which implement `AsRef<[u8]>`. This
-/// includes `String`, `str`, `Vec<u8>` and `[u8]`.
-///
-/// # Example
-///
-/// ```
-/// use hex::ToHex;
-///
-/// println!("{}", "Hello world!".encode_hex::<String>());
-/// # assert_eq!("Hello world!".encode_hex::<String>(), "48656c6c6f20776f726c6421".to_string());
-/// ```
-///
-/// *Note*: instead of using this trait, you might want to use [`encode()`].
-pub trait ToHex {
-    /// Encode the hex strict representing `self` into the result. Lower case
-    /// letters are used (e.g. `f9b4ca`)
-    fn encode_hex<T: iter::FromIterator<char>>(&self) -> T;
-
-    /// Encode the hex strict representing `self` into the result. Upper case
-    /// letters are used (e.g. `F9B4CA`)
-    fn encode_hex_upper<T: iter::FromIterator<char>>(&self) -> T;
-}
-
 const HEX_CHARS_LOWER: &[u8; 16] = b"0123456789abcdef";
 const HEX_CHARS_UPPER: &[u8; 16] = b"0123456789ABCDEF";
 
-struct BytesToHexChars<'a> {
+struct BytesToHexByteSequence<'a> {
     inner: ::core::slice::Iter<'a, u8>,
     table: &'static [u8; 16],
-    next: Option<char>,
+    next: Option<u8>,
 }
 
-impl<'a> BytesToHexChars<'a> {
-    fn new(inner: &'a [u8], table: &'static [u8; 16]) -> BytesToHexChars<'a> {
-        BytesToHexChars {
+impl<'a> BytesToHexByteSequence<'a> {
+    fn new(inner: &'a [u8], table: &'static [u8; 16]) -> BytesToHexByteSequence<'a> {
+        BytesToHexByteSequence {
             inner: inner.iter(),
             table,
             next: None,
@@ -103,15 +78,15 @@ impl<'a> BytesToHexChars<'a> {
     }
 }
 
-impl<'a> Iterator for BytesToHexChars<'a> {
-    type Item = char;
+impl<'a> Iterator for BytesToHexByteSequence<'a> {
+    type Item = u8;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.next.take() {
             Some(current) => Some(current),
             None => self.inner.next().map(|byte| {
-                let current = self.table[(byte >> 4) as usize] as char;
-                self.next = Some(self.table[(byte & 0x0F) as usize] as char);
+                let current = self.table[(byte >> 4) as usize];
+                self.next = Some(self.table[(byte & 0x0F) as usize]);
                 current
             }),
         }
@@ -123,7 +98,7 @@ impl<'a> Iterator for BytesToHexChars<'a> {
     }
 }
 
-impl<'a> iter::ExactSizeIterator for BytesToHexChars<'a> {
+impl<'a> iter::ExactSizeIterator for BytesToHexByteSequence<'a> {
     fn len(&self) -> usize {
         let mut length = self.inner.len() * 2;
         if self.next.is_some() {
@@ -133,19 +108,12 @@ impl<'a> iter::ExactSizeIterator for BytesToHexChars<'a> {
     }
 }
 
-#[inline]
-fn encode_to_iter<T: iter::FromIterator<char>>(table: &'static [u8; 16], source: &[u8]) -> T {
-    BytesToHexChars::new(source, table).collect()
+pub fn encode_hex_iter<'a>(source: &'a [u8]) -> impl iter::Iterator<Item = u8> + 'a {
+    BytesToHexByteSequence::new(source, HEX_CHARS_LOWER).into_iter()
 }
 
-impl<T: AsRef<[u8]>> ToHex for T {
-    fn encode_hex<U: iter::FromIterator<char>>(&self) -> U {
-        encode_to_iter(HEX_CHARS_LOWER, self.as_ref())
-    }
-
-    fn encode_hex_upper<U: iter::FromIterator<char>>(&self) -> U {
-        encode_to_iter(HEX_CHARS_UPPER, self.as_ref())
-    }
+pub fn encode_hex_upper_iter<'a>(source: &'a [u8]) -> impl iter::Iterator<Item = u8> + 'a {
+    BytesToHexByteSequence::new(source, HEX_CHARS_UPPER).into_iter()
 }
 
 /// Types that can be decoded from a hex string.
