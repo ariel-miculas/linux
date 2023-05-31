@@ -3,20 +3,32 @@
 
 use crate::puzzle::error::Result;
 use crate::puzzle::error::WireFormatError;
+use crate::puzzle::oci::Image;
 use crate::puzzle::types as format;
-use crate::puzzle::types::{Inode, InodeMode, MetadataBlob};
+use crate::puzzle::types::{Digest, Inode, InodeMode};
 use alloc::vec::Vec;
+use kernel::mount::Vfsmount;
 use kernel::prelude::ENOENT;
+use kernel::str::CStr;
+use kernel::sync::Arc;
 
 pub(crate) struct PuzzleFS {
+    pub(crate) oci: Image,
     layers: Vec<format::MetadataBlob>,
 }
 
 impl PuzzleFS {
-    pub(crate) fn new(md: MetadataBlob) -> Result<Self> {
-        let mut v = Vec::new();
-        v.try_push(md)?;
-        Ok(PuzzleFS { layers: v })
+    pub(crate) fn open(vfsmount: Arc<Vfsmount>, rootfs_path: &CStr) -> Result<PuzzleFS> {
+        let oci = Image::open(vfsmount)?;
+        let rootfs = oci.open_rootfs_blob(rootfs_path)?;
+
+        let mut layers = Vec::new();
+        for md in rootfs.metadatas.iter() {
+            let digest = Digest::try_from(md)?;
+            layers.try_push(oci.open_metadata_blob(&digest)?)?;
+        }
+
+        Ok(PuzzleFS { oci, layers })
     }
 
     pub(crate) fn find_inode(&self, ino: u64) -> Result<Inode> {
