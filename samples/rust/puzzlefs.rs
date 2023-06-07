@@ -7,6 +7,7 @@ use kernel::prelude::*;
 use kernel::{
     c_str, file, fs,
     io_buffer::IoBufferWriter,
+    str::CString,
     sync::{Arc, ArcBorrow},
 };
 
@@ -31,27 +32,29 @@ struct PuzzlefsInfo {
     puzzlefs: Arc<PuzzleFS>,
 }
 
+#[derive(Default)]
+struct PuzzleFsParams {
+    oci_root_dir: Option<CString>,
+    image_manifest: Option<CString>,
+}
+
 #[vtable]
 impl fs::Context<Self> for PuzzleFsModule {
-    type Data = ();
+    type Data = Box<PuzzleFsParams>;
 
-    kernel::define_fs_params! {(),
-        {flag, "flag", |_, v| { pr_info!("flag passed-in: {v}\n"); Ok(()) } },
-        {flag_no, "flagno", |_, v| { pr_info!("flagno passed-in: {v}\n"); Ok(()) } },
-        {bool, "bool", |_, v| { pr_info!("bool passed-in: {v}\n"); Ok(()) } },
-        {u32, "u32", |_, v| { pr_info!("u32 passed-in: {v}\n"); Ok(()) } },
-        {u32oct, "u32oct", |_, v| { pr_info!("u32oct passed-in: {v}\n"); Ok(()) } },
-        {u32hex, "u32hex", |_, v| { pr_info!("u32hex passed-in: {v}\n"); Ok(()) } },
-        {s32, "s32", |_, v| { pr_info!("s32 passed-in: {v}\n"); Ok(()) } },
-        {u64, "u64", |_, v| { pr_info!("u64 passed-in: {v}\n"); Ok(()) } },
-        {string, "string", |_, v| { pr_info!("string passed-in: {v}\n"); Ok(()) } },
-        {enum, "enum", [("first", 10), ("second", 20)], |_, v| {
-            pr_info!("enum passed-in: {v}\n"); Ok(()) }
-        },
+    kernel::define_fs_params! {Box<PuzzleFsParams>,
+        {string, "oci_root_dir", |s, v| {
+                                      s.oci_root_dir = Some(CString::try_from_fmt(format_args!("{v}"))?);
+                                      Ok(())
+                                  }},
+        {string, "image_manifest", |s, v| {
+                                      s.image_manifest = Some(CString::try_from_fmt(format_args!("{v}"))?);
+                                      Ok(())
+                                  }},
     }
 
-    fn try_new() -> Result {
-        Ok(())
+    fn try_new() -> Result<Self::Data> {
+        Ok(Box::try_new(PuzzleFsParams::default())?)
     }
 }
 
@@ -136,11 +139,27 @@ impl fs::Type for PuzzleFsModule {
     const FLAGS: i32 = fs::flags::USERNS_MOUNT;
     const DCACHE_BASED: bool = true;
 
-    fn fill_super(_data: (), sb: fs::NewSuperBlock<'_, Self>) -> Result<&fs::SuperBlock<Self>> {
-        let puzzlefs = PuzzleFS::open(
-            c_str!("/home/puzzlefs_oci"),
-            c_str!("2d6602d678140540dc7e96de652a76a8b16e8aca190bae141297bcffdcae901b"),
-        );
+    fn fill_super(
+        data: Box<PuzzleFsParams>,
+        sb: fs::NewSuperBlock<'_, Self>,
+    ) -> Result<&fs::SuperBlock<Self>> {
+        let oci_root_dir = match data.oci_root_dir {
+            Some(val) => val,
+            None => {
+                pr_err!("missing oci_root_dir parameter!\n");
+                return Err(ENOTSUPP);
+            }
+        };
+
+        let image_manifest = match data.image_manifest {
+            Some(val) => val,
+            None => {
+                pr_err!("missing image_manifest parameter!\n");
+                return Err(ENOTSUPP);
+            }
+        };
+
+        let puzzlefs = PuzzleFS::open(&oci_root_dir, &image_manifest);
 
         if let Err(ref e) = puzzlefs {
             pr_info!("error opening puzzlefs {e}\n");
