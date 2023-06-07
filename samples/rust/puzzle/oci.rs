@@ -1,19 +1,21 @@
-use crate::puzzle::error::Result;
+use crate::puzzle::error::{Result, WireFormatError};
+use crate::puzzle::types as format;
 use crate::puzzle::types::{Digest, MetadataBlob, Rootfs};
 use kernel::c_str;
 use kernel::file;
 use kernel::file::RegularFile;
 use kernel::mount::Vfsmount;
-use kernel::pr_info;
+use kernel::pr_debug;
+use kernel::prelude::ENOTSUPP;
 use kernel::str::{CStr, CString};
-use kernel::sync::Arc;
 
+#[derive(Debug)]
 pub(crate) struct Image {
-    vfs_mount: Arc<Vfsmount>,
+    pub(crate) vfs_mount: Vfsmount,
 }
 
 impl Image {
-    pub(crate) fn open(vfsmount: Arc<Vfsmount>) -> Result<Self> {
+    pub(crate) fn open(vfsmount: Vfsmount) -> Result<Self> {
         Ok(Image {
             vfs_mount: vfsmount,
         })
@@ -26,7 +28,7 @@ impl Image {
     fn open_raw_blob(&self, digest: &Digest) -> Result<RegularFile> {
         let filename =
             CString::try_from_fmt(format_args!("{}/{digest}", self.blob_path_relative()))?;
-        pr_info!("trying to open {:?}\n", &filename);
+        pr_debug!("trying to open {:?}\n", &*filename);
 
         let file = RegularFile::from_path_in_root_mnt(
             &self.vfs_mount,
@@ -47,5 +49,23 @@ impl Image {
         let digest = Digest::try_from(path)?;
         let rootfs = Rootfs::open(self.open_raw_blob(&digest)?)?;
         Ok(rootfs)
+    }
+
+    pub(crate) fn fill_from_chunk(
+        &self,
+        chunk: format::BlobRef,
+        addl_offset: u64,
+        buf: &mut [u8],
+    ) -> Result<usize> {
+        let digest = &<Digest>::try_from(chunk)?;
+
+        let blob = if chunk.compressed {
+            return Err(WireFormatError::KernelError(ENOTSUPP));
+        } else {
+            self.open_raw_blob(digest)?
+        };
+
+        let n = blob.read_with_offset(buf, chunk.offset + addl_offset)?;
+        Ok(n)
     }
 }
