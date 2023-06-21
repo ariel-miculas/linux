@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Convenience wrappers of the datatypes defined in schema.capnp.
 
 use crate::dynamic_value;
