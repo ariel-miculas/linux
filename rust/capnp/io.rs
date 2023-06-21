@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Custom I/O traits that roughly mirror `std::io::{Read, BufRead, Write}`.
 //! This extra layer of indirection enables support of no-std environments.
 

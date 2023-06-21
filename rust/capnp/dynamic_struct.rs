@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Dynamically-typed structs.
 
 use crate::introspect::TypeVariant;

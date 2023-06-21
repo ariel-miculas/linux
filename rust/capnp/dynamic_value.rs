@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Dynamically typed values.
 
 use crate::introspect::{self, TypeVariant};

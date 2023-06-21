@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 pub trait Primitive {
     type Raw;
 
