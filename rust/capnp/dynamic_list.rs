@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Dynamically-typed lists.
 
 use crate::dynamic_value;

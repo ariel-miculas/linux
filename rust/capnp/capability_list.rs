@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Copyright (c) 2017 David Renshaw and contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
