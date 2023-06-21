@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 //! Traits and types to support run-time type introspection, i.e. reflection.
 
 use crate::private::layout::ElementSize;
