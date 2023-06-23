@@ -2,6 +2,9 @@
 
 //! Convenience wrappers of the datatypes defined in schema.capnp.
 
+#[cfg(feature = "alloc")]
+use alloc::string::ToString;
+
 use crate::dynamic_value;
 use crate::introspect::{self, RawBrandedStructSchema, RawEnumSchema};
 use crate::private::layout;
@@ -72,10 +75,12 @@ impl StructSchema {
         if let Some(field) = self.find_field_by_name(name)? {
             Ok(field)
         } else {
-            Err(crate::Error::failed(format!(
-                "field \"{}\" not found",
-                name
-            )))
+            // error needs to be mutable only when the alloc feature is enabled
+            #[allow(unused_mut)]
+            let mut error = crate::Error::from_kind(crate::ErrorKind::FieldNotFound);
+            #[cfg(feature = "alloc")]
+            error.extra(name.to_string());
+            Err(error)
         }
     }
 
@@ -206,8 +211,9 @@ impl FieldSubset {
     }
 
     pub fn get(self, index: u16) -> Field {
+        let index = self.indices[index as usize];
         Field {
-            proto: self.fields.get(self.indices[index as usize] as u32),
+            proto: self.fields.get(index as u32),
             index,
             parent: self.parent,
         }

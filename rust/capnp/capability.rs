@@ -25,25 +25,36 @@
 //!
 //! Roughly corresponds to capability.h in the C++ implementation.
 
+#[cfg(feature = "alloc")]
 use alloc::boxed::Box;
+#[cfg(feature = "alloc")]
 use core::future::Future;
+#[cfg(feature = "alloc")]
 use core::marker::{PhantomData, Unpin};
 #[cfg(feature = "rpc_try")]
 use core::ops::Try;
+#[cfg(feature = "alloc")]
 use core::pin::Pin;
+#[cfg(feature = "alloc")]
 use core::task::Poll;
 
+use crate::any_pointer;
+#[cfg(feature = "alloc")]
 use crate::private::capability::{ClientHook, ParamsHook, RequestHook, ResponseHook, ResultsHook};
+#[cfg(feature = "alloc")]
 use crate::traits::{Owned, Pipelined};
-use crate::{any_pointer, Error, MessageSize};
+#[cfg(feature = "alloc")]
+use crate::{Error, MessageSize};
 
 /// A computation that might eventually resolve to a value of type `T` or to an error
 ///  of type `E`. Dropping the promise cancels the computation.
+#[cfg(feature = "alloc")]
 #[must_use = "futures do nothing unless polled"]
 pub struct Promise<T, E> {
     inner: PromiseInner<T, E>,
 }
 
+#[cfg(feature = "alloc")]
 enum PromiseInner<T, E> {
     Immediate(Result<T, E>),
     Deferred(Pin<Box<dyn Future<Output = core::result::Result<T, E>> + 'static>>),
@@ -51,8 +62,10 @@ enum PromiseInner<T, E> {
 }
 
 // Allow Promise<T,E> to be Unpin, regardless of whether T and E are.
+#[cfg(feature = "alloc")]
 impl<T, E> Unpin for PromiseInner<T, E> {}
 
+#[cfg(feature = "alloc")]
 impl<T, E> Promise<T, E> {
     pub fn ok(value: T) -> Self {
         Self {
@@ -76,6 +89,7 @@ impl<T, E> Promise<T, E> {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<T, E> Future for Promise<T, E> {
     type Output = core::result::Result<T, E>;
 
@@ -93,6 +107,7 @@ impl<T, E> Future for Promise<T, E> {
     }
 }
 
+#[cfg(feature = "alloc")]
 #[cfg(feature = "rpc_try")]
 impl<T> std::ops::Try for Promise<T, crate::Error> {
     type Output = Self;
@@ -107,6 +122,7 @@ impl<T> std::ops::Try for Promise<T, crate::Error> {
     }
 }
 
+#[cfg(feature = "alloc")]
 #[cfg(feature = "rpc_try")]
 impl<T> std::ops::FromResidual for Promise<T, crate::Error> {
     fn from_residual(residual: <Self as Try>::Residual) -> Self {
@@ -118,6 +134,7 @@ impl<T> std::ops::FromResidual for Promise<T, crate::Error> {
 }
 
 /// A promise for a result from a method call.
+#[cfg(feature = "alloc")]
 #[must_use]
 pub struct RemotePromise<Results>
 where
@@ -128,11 +145,13 @@ where
 }
 
 /// A response from a method call, as seen by the client.
+#[cfg(feature = "alloc")]
 pub struct Response<Results> {
     pub marker: PhantomData<Results>,
     pub hook: Box<dyn ResponseHook>,
 }
 
+#[cfg(feature = "alloc")]
 impl<Results> Response<Results>
 where
     Results: Pipelined + Owned,
@@ -149,11 +168,13 @@ where
 }
 
 /// A method call that has not been sent yet.
+#[cfg(feature = "alloc")]
 pub struct Request<Params, Results> {
     pub marker: PhantomData<(Params, Results)>,
     pub hook: Box<dyn RequestHook>,
 }
 
+#[cfg(feature = "alloc")]
 impl<Params, Results> Request<Params, Results>
 where
     Params: Owned,
@@ -174,6 +195,7 @@ where
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<Params, Results> Request<Params, Results>
 where
     Results: Pipelined + Owned + 'static + Unpin,
@@ -197,11 +219,13 @@ where
 }
 
 /// The values of the parameters passed to a method call, as seen by the server.
+#[cfg(feature = "alloc")]
 pub struct Params<T> {
     pub marker: PhantomData<T>,
     pub hook: Box<dyn ParamsHook>,
 }
 
+#[cfg(feature = "alloc")]
 impl<T> Params<T> {
     pub fn new(hook: Box<dyn ParamsHook>) -> Self {
         Self {
@@ -218,11 +242,13 @@ impl<T> Params<T> {
 }
 
 /// The return values of a method, written in-place by the method body.
+#[cfg(feature = "alloc")]
 pub struct Results<T> {
     pub marker: PhantomData<T>,
     pub hook: Box<dyn ResultsHook>,
 }
 
+#[cfg(feature = "alloc")]
 impl<T> Results<T>
 where
     T: Owned,
@@ -248,6 +274,7 @@ pub trait FromTypelessPipeline {
 }
 
 /// Trait implemented (via codegen) by all user-defined capability client types.
+#[cfg(feature = "alloc")]
 pub trait FromClientHook {
     /// Wraps a client hook to create a new client.
     fn new(hook: Box<dyn ClientHook>) -> Self;
@@ -270,10 +297,12 @@ pub trait FromClientHook {
 }
 
 /// An untyped client.
+#[cfg(feature = "alloc")]
 pub struct Client {
     pub hook: Box<dyn ClientHook>,
 }
 
+#[cfg(feature = "alloc")]
 impl Client {
     pub fn new(hook: Box<dyn ClientHook>) -> Self {
         Self { hook }
@@ -303,6 +332,7 @@ impl Client {
 }
 
 /// An untyped server.
+#[cfg(feature = "alloc")]
 pub trait Server {
     fn dispatch_call(
         &mut self,
@@ -314,6 +344,7 @@ pub trait Server {
 }
 
 /// Trait to track the relationship between generated Server traits and Client structs.
+#[cfg(feature = "alloc")]
 pub trait FromServer<S>: FromClientHook {
     // Implemented by the generated ServerDispatch struct.
     type Dispatch: Server + 'static + core::ops::DerefMut<Target = S>;
@@ -323,6 +354,7 @@ pub trait FromServer<S>: FromClientHook {
 
 /// Gets the "resolved" version of a capability. One place this is useful is for pre-resolving
 /// the argument to `capnp_rpc::CapabilityServerSet::get_local_server_of_resolved()`.
+#[cfg(feature = "alloc")]
 pub async fn get_resolved_cap<C: FromClientHook>(cap: C) -> C {
     let mut hook = cap.into_client_hook();
     let _ = hook.when_resolved().await;

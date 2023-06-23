@@ -21,8 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+use crate::private::layout::CapTable;
 use crate::private::layout::{
-    CapTable, ListReader, PointerBuilder, PointerReader, StructBuilder, StructReader, StructSize,
+    ListReader, PointerBuilder, PointerReader, StructBuilder, StructReader, StructSize,
 };
 use crate::Result;
 

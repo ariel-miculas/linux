@@ -61,7 +61,7 @@ impl<'a> Reader<'a> {
             }
             (value::Interface(()), TypeVariant::Capability) => Ok(Capability.into()),
             (value::AnyPointer(a), TypeVariant::AnyPointer) => Ok(a.into()),
-            _ => Err(crate::Error::failed("type mismatch".into())),
+            _ => Err(crate::Error::from_kind(crate::ErrorKind::TypeMismatch)),
         }
     }
 
@@ -105,7 +105,9 @@ pub trait DowncastReader<'a> {
 
 impl<'a> DowncastReader<'a> for () {
     fn downcast_reader(value: Reader<'a>) -> () {
-        let Reader::Void = value else { panic!("error downcasting to void") };
+        let Reader::Void = value else {
+            panic!("error downcasting to void")
+        };
     }
 }
 
@@ -224,7 +226,9 @@ pub trait DowncastBuilder<'a> {
 
 impl<'a> DowncastBuilder<'a> for () {
     fn downcast_builder(value: Builder<'a>) -> () {
-        let Builder::Void = value else { panic!("error downcasting to void") };
+        let Builder::Void = value else {
+            panic!("error downcasting to void")
+        };
     }
 }
 

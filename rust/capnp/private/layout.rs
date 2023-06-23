@@ -21,22 +21,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use alloc::boxed::Box;
-use alloc::string::String;
-use alloc::vec::Vec;
+#[cfg(feature = "alloc")]
+use alloc::{boxed::Box, vec::Vec};
 use core::cell::Cell;
 use core::mem;
 use core::ptr;
 
 use crate::data;
 use crate::private::arena::{BuilderArena, NullArena, ReaderArena, SegmentId};
+#[cfg(feature = "alloc")]
 use crate::private::capability::ClientHook;
 use crate::private::mask::Mask;
 use crate::private::primitive::{Primitive, WireValue};
 use crate::private::units::*;
 use crate::private::zero;
 use crate::text;
-use crate::{MessageSize, Result};
+use crate::{Error, ErrorKind, MessageSize, Result};
 
 pub use self::ElementSize::{
     Bit, Byte, EightBytes, FourBytes, InlineComposite, Pointer, TwoBytes, Void,
@@ -161,9 +161,9 @@ impl WirePointer {
     }
 
     #[inline]
-    pub fn target(&self) -> *const u8 {
-        let this_addr: *const u8 = self as *const _ as *const _;
-        unsafe { this_addr.offset(8 * (1 + ((self.offset_and_kind.get() as i32) >> 2)) as isize) }
+    pub fn target(ptr: *const Self) -> *const u8 {
+        let this_addr: *const u8 = ptr as *const _;
+        unsafe { this_addr.offset(8 * (1 + (((*ptr).offset_and_kind.get() as i32) >> 2)) as isize) }
     }
 
     // At one point, we had `&self` here instead of `ptr: *const Self`, but miri
@@ -347,22 +347,24 @@ impl WirePointer {
 }
 
 mod wire_helpers {
+    #[cfg(feature = "alloc")]
     use alloc::boxed::Box;
-    use alloc::string::ToString;
     use core::{ptr, slice};
 
     use crate::data;
     use crate::private::arena::*;
+    #[cfg(feature = "alloc")]
     use crate::private::capability::ClientHook;
     use crate::private::layout::ElementSize::*;
     use crate::private::layout::{data_bits_per_element, pointers_per_element};
+    use crate::private::layout::{CapTableBuilder, CapTableReader};
     use crate::private::layout::{
-        CapTableBuilder, CapTableReader, ElementSize, ListBuilder, ListReader, StructBuilder,
-        StructReader, StructSize, WirePointer, WirePointerKind,
+        ElementSize, ListBuilder, ListReader, StructBuilder, StructReader, StructSize, WirePointer,
+        WirePointerKind,
     };
     use crate::private::units::*;
     use crate::text;
-    use crate::{Error, MessageSize, Result};
+    use crate::{Error, ErrorKind, MessageSize, Result};
 
     pub struct SegmentAnd<T> {
         #[allow(dead_code)]
@@ -701,7 +703,7 @@ mod wire_helpers {
         };
 
         if nesting_limit <= 0 {
-            return Err(Error::failed("Message is too deeply nested.".to_string()));
+            return Err(Error::from_kind(ErrorKind::MessageIsTooDeeplyNested));
         }
 
         nesting_limit -= 1;
@@ -780,17 +782,16 @@ mod wire_helpers {
                         let count = (*element_tag).inline_composite_list_element_count();
 
                         if (*element_tag).kind() != WirePointerKind::Struct {
-                            return Err(Error::failed(
-                                "Don't know how to handle non-STRUCT inline composite.".to_string(),
+                            return Err(Error::from_kind(
+                                ErrorKind::CantHandleNonStructInlineComposite,
                             ));
                         }
 
                         let actual_size =
                             u64::from((*element_tag).struct_word_size()) * u64::from(count);
                         if actual_size > u64::from(word_count) {
-                            return Err(Error::failed(
-                                "InlineComposite list's elements overrun its word count."
-                                    .to_string(),
+                            return Err(Error::from_kind(
+                                ErrorKind::InlineCompositeListsElementsOverrunItsWordCount,
                             ));
                         }
 
@@ -821,13 +822,13 @@ mod wire_helpers {
                 }
             }
             WirePointerKind::Far => {
-                return Err(Error::failed("Malformed double-far pointer.".to_string()));
+                return Err(Error::from_kind(ErrorKind::MalformedDoubleFarPointer));
             }
             WirePointerKind::Other => {
                 if (*reff).is_capability() {
                     result.cap_count += 1;
                 } else {
-                    return Err(Error::failed("Unknown pointer type.".to_string()));
+                    return Err(Error::from_kind(ErrorKind::UnknownPointerType));
                 }
             }
         }
@@ -876,7 +877,7 @@ mod wire_helpers {
                     ptr::write_bytes(dst, 0, 1);
                     (ptr::null_mut(), dst, segment_id)
                 } else {
-                    let src_ptr = (*src).target();
+                    let src_ptr = WirePointer::target(src);
                     let (dst_ptr, dst, segment_id) = allocate(
                         arena,
                         dst,
@@ -911,7 +912,7 @@ mod wire_helpers {
                         u64::from((*src).list_element_count())
                             * u64::from(data_bits_per_element((*src).list_element_size())),
                     );
-                    let src_ptr = (*src).target();
+                    let src_ptr = WirePointer::target(src);
                     let (dst_ptr, dst, segment_id) =
                         allocate(arena, dst, segment_id, word_count, WirePointerKind::List);
                     ptr::copy_nonoverlapping(
@@ -927,7 +928,7 @@ mod wire_helpers {
                 }
 
                 ElementSize::Pointer => {
-                    let src_refs: *const WirePointer = (*src).target() as _;
+                    let src_refs: *const WirePointer = WirePointer::target(src) as _;
                     let (dst_refs, dst, segment_id) = allocate(
                         arena,
                         dst,
@@ -949,7 +950,7 @@ mod wire_helpers {
                     (dst_refs, dst, segment_id)
                 }
                 ElementSize::InlineComposite => {
-                    let src_ptr = (*src).target();
+                    let src_ptr = WirePointer::target(src);
                     let (dst_ptr, dst, segment_id) = allocate(
                         arena,
                         dst,
@@ -1176,9 +1177,8 @@ mod wire_helpers {
         let (old_ptr, old_ref, old_segment_id) =
             follow_builder_fars(arena, reff, ref_target, segment_id)?;
         if (*old_ref).kind() != WirePointerKind::Struct {
-            return Err(Error::failed(
-                "Message contains non-struct pointer where struct pointer was expected."
-                    .to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageContainsNonStructPointerWhereStructPointerWasExpected,
             ));
         }
 
@@ -1373,10 +1373,7 @@ mod wire_helpers {
             follow_builder_fars(arena, orig_ref, orig_ref_target, orig_segment_id)?;
 
         if (*reff).kind() != WirePointerKind::List {
-            return Err(Error::failed(
-                "Called get_writable_list_pointer() but existing pointer is not a list."
-                    .to_string(),
-            ));
+            return Err(Error::from_kind(ErrorKind::ExistingPointerIsNotAList));
         }
 
         let old_size = (*reff).list_element_size();
@@ -1392,8 +1389,8 @@ mod wire_helpers {
             let tag: *const WirePointer = ptr as *const _;
 
             if (*tag).kind() != WirePointerKind::Struct {
-                return Err(Error::failed(
-                    "InlineComposite list with non-STRUCT elements not supported.".to_string(),
+                return Err(Error::from_kind(
+                    ErrorKind::InlineCompositeListWithNonStructElementsNotSupported,
                 ));
             }
 
@@ -1405,21 +1402,21 @@ mod wire_helpers {
             match element_size {
                 Void => {} // Anything is a valid upgrade from Void.
                 Bit => {
-                    return Err(Error::failed(
-                        "Found struct list where bit list was expected.".to_string(),
+                    return Err(Error::from_kind(
+                        ErrorKind::FoundStructListWhereBitListWasExpected,
                     ));
                 }
                 Byte | TwoBytes | FourBytes | EightBytes => {
                     if data_size < 1 {
-                        return Err(Error::failed(
-                            "Existing list value is incompatible with expected type.".to_string(),
+                        return Err(Error::from_kind(
+                            ErrorKind::ExistingListValueIsIncompatibleWithExpectedType,
                         ));
                     }
                 }
                 Pointer => {
                     if pointer_count < 1 {
-                        return Err(Error::failed(
-                            "Existing list value is incompatible with expected type.".to_string(),
+                        return Err(Error::from_kind(
+                            ErrorKind::ExistingListValueIsIncompatibleWithExpectedType,
                         ));
                     }
                     // Adjust the pointer to point at the reference segment.
@@ -1449,8 +1446,8 @@ mod wire_helpers {
             if data_size < data_bits_per_element(element_size)
                 || pointer_count < pointers_per_element(element_size)
             {
-                return Err(Error::failed(
-                    "Existing list value is incompatible with expected type.".to_string(),
+                return Err(Error::from_kind(
+                    ErrorKind::ExistingListValueIsIncompatibleWithExpectedType,
                 ));
             }
 
@@ -1503,10 +1500,7 @@ mod wire_helpers {
             follow_builder_fars(arena, orig_ref, orig_ref_target, orig_segment_id)?;
 
         if (*old_ref).kind() != WirePointerKind::List {
-            return Err(Error::failed(
-                "Called get_writable_struct_list_pointer() but existing pointer is not a list."
-                    .to_string(),
-            ));
+            return Err(Error::from_kind(ErrorKind::ExistingPointerIsNotAList));
         }
 
         let old_size = (*old_ref).list_element_size();
@@ -1517,8 +1511,8 @@ mod wire_helpers {
             let old_tag: *const WirePointer = old_ptr as *const _;
             old_ptr = old_ptr.add(BYTES_PER_WORD);
             if (*old_tag).kind() != WirePointerKind::Struct {
-                return Err(Error::failed(
-                    "InlineComposite list with non-STRUCT elements not supported.".to_string(),
+                return Err(Error::from_kind(
+                    ErrorKind::InlineCompositeListWithNonStructElementsNotSupported,
                 ));
             }
 
@@ -1634,10 +1628,8 @@ mod wire_helpers {
                 // Upgrade to an inline composite list.
 
                 if old_size == ElementSize::Bit {
-                    return Err(Error::failed(
-                        "Found bit list where struct list was expected; upgrading boolean \
-                         lists to struct lists is no longer supported."
-                            .to_string(),
+                    return Err(Error::from_kind(
+                        ErrorKind::FoundBitListWhereStructListWasExpected,
                     ));
                 }
 
@@ -1773,7 +1765,7 @@ mod wire_helpers {
                     let (new_ref_target, new_reff, new_segment_id) = copy_message(
                         arena,
                         segment_id,
-                        CapTableBuilder::Plain(::core::ptr::null_mut()),
+                        Default::default(),
                         reff,
                         d.as_ptr() as *const _,
                     );
@@ -1789,23 +1781,17 @@ mod wire_helpers {
         let (ptr, reff, _segment_id) = follow_builder_fars(arena, reff, ref_target, segment_id)?;
 
         if (*reff).kind() != WirePointerKind::List {
-            return Err(Error::failed(
-                "Called get_writable_text_pointer() but existing pointer is not a list."
-                    .to_string(),
-            ));
+            return Err(Error::from_kind(ErrorKind::ExistingPointerIsNotAList));
         }
         if (*reff).list_element_size() != Byte {
-            return Err(Error::failed(
-                "Called get_writable_text_pointer() but existing list pointer is not byte-sized."
-                    .to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::ExistingListPointerIsNotByteSized,
             ));
         }
 
         let count = (*reff).list_element_count();
         if count == 0 || *ptr.offset((count - 1) as isize) != 0 {
-            return Err(Error::failed(
-                "Text blob missing NUL terminator.".to_string(),
-            ));
+            return Err(Error::from_kind(ErrorKind::TextBlobMissingNULTerminator));
         }
 
         // Subtract 1 from the size for the NUL terminator.
@@ -1866,7 +1852,7 @@ mod wire_helpers {
                     let (new_ref_target, new_reff, new_segment_id) = copy_message(
                         arena,
                         segment_id,
-                        CapTableBuilder::Plain(core::ptr::null_mut()),
+                        Default::default(),
                         reff,
                         d.as_ptr() as *const _,
                     );
@@ -1882,15 +1868,11 @@ mod wire_helpers {
         let (ptr, reff, _segment_id) = follow_builder_fars(arena, reff, ref_target, segment_id)?;
 
         if (*reff).kind() != WirePointerKind::List {
-            return Err(Error::failed(
-                "Called get_writable_data_pointer() but existing pointer is not a list."
-                    .to_string(),
-            ));
+            return Err(Error::from_kind(ErrorKind::ExistingPointerIsNotAList));
         }
         if (*reff).list_element_size() != Byte {
-            return Err(Error::failed(
-                "Called get_writable_data_pointer() but existing list pointer is not byte-sized."
-                    .to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::ExistingListPointerIsNotByteSized,
             ));
         }
 
@@ -1914,8 +1896,8 @@ mod wire_helpers {
         if canonicalize {
             // StructReaders should not have bitwidths other than 1, but let's be safe
             if !(value.data_size == 1 || value.data_size % BITS_PER_BYTE as u32 == 0) {
-                return Err(Error::failed(
-                    "struct reader had bitwidth other than 1".to_string(),
+                return Err(Error::from_kind(
+                    ErrorKind::StructReaderHadBitwidthOtherThan1,
                 ));
             }
 
@@ -1984,6 +1966,7 @@ mod wire_helpers {
         })
     }
 
+    #[cfg(feature = "alloc")]
     pub fn set_capability_pointer(
         _arena: &mut dyn BuilderArena,
         _segment_id: u32,
@@ -2191,9 +2174,8 @@ mod wire_helpers {
         match (*src).kind() {
             WirePointerKind::Struct => {
                 if nesting_limit <= 0 {
-                    return Err(Error::failed(
-                        "Message is too deeply-nested or contains cycles. See ReaderOptions."
-                            .to_string(),
+                    return Err(Error::from_kind(
+                        ErrorKind::MessageIsTooDeeplyNestedOrContainsCycles,
                     ));
                 }
 
@@ -2228,9 +2210,8 @@ mod wire_helpers {
             WirePointerKind::List => {
                 let element_size = (*src).list_element_size();
                 if nesting_limit <= 0 {
-                    return Err(Error::failed(
-                        "Message is too deeply-nested or contains cycles. See ReaderOptions."
-                            .to_string(),
+                    return Err(Error::from_kind(
+                        ErrorKind::MessageIsTooDeeplyNestedOrContainsCycles,
                     ));
                 }
 
@@ -2248,9 +2229,8 @@ mod wire_helpers {
                     )?;
 
                     if (*tag).kind() != WirePointerKind::Struct {
-                        return Err(Error::failed(
-                            "InlineComposite lists of non-STRUCT type are not supported."
-                                .to_string(),
+                        return Err(Error::from_kind(
+                            ErrorKind::InlineCompositeListsOfNonStructTypeAreNotSupported,
                         ));
                     }
 
@@ -2260,8 +2240,8 @@ mod wire_helpers {
                     if u64::from(words_per_element) * u64::from(element_count)
                         > u64::from(word_count)
                     {
-                        return Err(Error::failed(
-                            "InlineComposite list's elements overrun its word count.".to_string(),
+                        return Err(Error::from_kind(
+                            ErrorKind::InlineCompositeListsElementsOverrunItsWordCount,
                         ));
                     }
 
@@ -2334,16 +2314,17 @@ mod wire_helpers {
                     )
                 }
             }
-            WirePointerKind::Far => Err(Error::failed("Malformed double-far pointer.".to_string())),
+            WirePointerKind::Far => Err(Error::from_kind(ErrorKind::MalformedDoubleFarPointer)),
             WirePointerKind::Other => {
                 if !(*src).is_capability() {
-                    return Err(Error::failed("Unknown pointer type.".to_string()));
+                    return Err(Error::from_kind(ErrorKind::UnknownPointerType));
                 }
                 if canonicalize {
-                    return Err(Error::failed(
-                        "Cannot create a canonical message with a capability".to_string(),
+                    return Err(Error::from_kind(
+                        ErrorKind::CannotCreateACanonicalMessageWithACapability,
                     ));
                 }
+                #[cfg(feature = "alloc")]
                 match src_cap_table.extract_cap((*src).cap_index() as usize) {
                     Some(cap) => {
                         set_capability_pointer(dst_arena, dst_segment_id, dst_cap_table, dst, cap);
@@ -2352,10 +2333,12 @@ mod wire_helpers {
                             value: ptr::null_mut(),
                         })
                     }
-                    None => Err(Error::failed(
-                        "Message contained invalid capability pointer.".to_string(),
+                    None => Err(Error::from_kind(
+                        ErrorKind::MessageContainsInvalidCapabilityPointer,
                     )),
                 }
+                #[cfg(not(feature = "alloc"))]
+                return Err(Error::from_kind(ErrorKind::UnknownPointerType));
             }
         }
     }
@@ -2384,8 +2367,8 @@ mod wire_helpers {
         }
 
         if nesting_limit <= 0 {
-            return Err(Error::failed(
-                "Message is too deeply-nested or contains cycles.".to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageIsTooDeeplyNestedOrContainsCycles,
             ));
         }
 
@@ -2394,9 +2377,8 @@ mod wire_helpers {
         let data_size_words = (*reff).struct_data_size();
 
         if (*reff).kind() != WirePointerKind::Struct {
-            return Err(Error::failed(
-                "Message contains non-struct pointer where struct pointer was expected."
-                    .to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageContainsNonStructPointerWhereStructPointerWasExpected,
             ));
         }
 
@@ -2421,6 +2403,7 @@ mod wire_helpers {
     }
 
     #[inline]
+    #[cfg(feature = "alloc")]
     pub unsafe fn read_capability_pointer(
         _arena: &dyn ReaderArena,
         _segment_id: u32,
@@ -2429,21 +2412,20 @@ mod wire_helpers {
         _nesting_limit: i32,
     ) -> Result<Box<dyn ClientHook>> {
         if (*reff).is_null() {
-            Err(Error::failed(
-                "Message contains null capability pointer.".to_string(),
+            Err(Error::from_kind(
+                ErrorKind::MessageContainsNullCapabilityPointer,
             ))
         } else if !(*reff).is_capability() {
-            Err(Error::failed(
-                "Message contains non-capability pointer where capability pointer was expected."
-                    .to_string(),
+            Err(Error::from_kind(
+                ErrorKind::MessageContainsNonCapabilityPointerWhereCapabilityPointerWasExpected,
             ))
         } else {
             let n = (*reff).cap_index() as usize;
             match cap_table.extract_cap(n) {
                 Some(client_hook) => Ok(client_hook),
-                None => Err(Error::failed(format!(
-                    "Message contains invalid capability pointer. Index: {n}"
-                ))),
+                None => Err(Error::from_kind(
+                    ErrorKind::MessageContainsInvalidCapabilityPointer,
+                )),
             }
         }
     }
@@ -2468,13 +2450,13 @@ mod wire_helpers {
         }
 
         if nesting_limit <= 0 {
-            return Err(Error::failed("nesting limit exceeded".to_string()));
+            return Err(Error::from_kind(ErrorKind::NestingLimitExceeded));
         }
         let (mut ptr, reff, segment_id) = follow_fars(arena, reff, segment_id)?;
 
         if (*reff).kind() != WirePointerKind::List {
-            return Err(Error::failed(
-                "Message contains non-list pointer where list pointer was expected".to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageContainsNonListPointerWhereListPointerWasExpected,
             ));
         }
 
@@ -2496,8 +2478,8 @@ mod wire_helpers {
                 )?;
 
                 if (*tag).kind() != WirePointerKind::Struct {
-                    return Err(Error::failed(
-                        "InlineComposite lists of non-STRUCT type are not supported.".to_string(),
+                    return Err(Error::from_kind(
+                        ErrorKind::InlineCompositeListsOfNonStructTypeAreNotSupported,
                     ));
                 }
 
@@ -2507,8 +2489,8 @@ mod wire_helpers {
                 let words_per_element = (*tag).struct_word_size();
 
                 if u64::from(size) * u64::from(words_per_element) > u64::from(word_count) {
-                    return Err(Error::failed(
-                        "InlineComposite list's elements overrun its word count.".to_string(),
+                    return Err(Error::from_kind(
+                        ErrorKind::InlineCompositeListsElementsOverrunItsWordCount,
                     ));
                 }
 
@@ -2527,23 +2509,21 @@ mod wire_helpers {
                 match expected_element_size {
                     None | Some(Void | InlineComposite) => (),
                     Some(Bit) => {
-                        return Err(Error::failed(
-                            "Found struct list where bit list was expected.".to_string(),
+                        return Err(Error::from_kind(
+                            ErrorKind::FoundStructListWhereBitListWasExpected,
                         ));
                     }
                     Some(Byte | TwoBytes | FourBytes | EightBytes) => {
                         if data_size == 0 {
-                            return Err(Error::failed(
-                                "Expected a primitive list, but got a list of pointer-only structs"
-                                    .to_string(),
+                            return Err(Error::from_kind(
+                                ErrorKind::ExpectedAPrimitiveListButGotAListOfPointerOnlyStructs,
                             ));
                         }
                     }
                     Some(Pointer) => {
                         if ptr_count == 0 {
-                            return Err(Error::failed(
-                                "Expected a pointer list, but got a list of data-only structs"
-                                    .to_string(),
+                            return Err(Error::from_kind(
+                                ErrorKind::ExpectedAPointerListButGotAListOfDataOnlyStructs,
                             ));
                         }
                     }
@@ -2589,9 +2569,9 @@ mod wire_helpers {
                 if let Some(expected_element_size) = expected_element_size {
                     if element_size == ElementSize::Bit && expected_element_size != ElementSize::Bit
                     {
-                        return Err(Error::failed(
-                            "Found bit list where struct list was expected; upgrade boolean lists to\
-                             structs is no longer supported".to_string()));
+                        return Err(Error::from_kind(
+                            ErrorKind::FoundBitListWhereStructListWasExpected,
+                        ));
                     }
 
                     // Verify that the elements are at least as large as the expected type. Note that if
@@ -2606,8 +2586,8 @@ mod wire_helpers {
                     if expected_data_bits_per_element > data_size
                         || expected_pointers_per_element > pointer_count
                     {
-                        return Err(Error::failed(
-                            "Message contains list with incompatible element type.".to_string(),
+                        return Err(Error::from_kind(
+                            ErrorKind::MessageContainsListWithIncompatibleElementType,
                         ));
                     }
                 }
@@ -2650,14 +2630,14 @@ mod wire_helpers {
         let size = (*reff).list_element_count();
 
         if (*reff).kind() != WirePointerKind::List {
-            return Err(Error::failed(
-                "Message contains non-list pointer where text was expected.".to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageContainsNonListPointerWhereTextWasExpected,
             ));
         }
 
         if (*reff).list_element_size() != Byte {
-            return Err(Error::failed(
-                "Message contains list pointer of non-bytes where text was expected.".to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageContainsListPointerOfNonBytesWhereTextWasExpected,
             ));
         }
 
@@ -2670,16 +2650,16 @@ mod wire_helpers {
         )?;
 
         if size == 0 {
-            return Err(Error::failed(
-                "Message contains text that is not NUL-terminated.".to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageContainsTextThatIsNotNULTerminated,
             ));
         }
 
         let str_ptr = ptr as *const u8;
 
         if (*str_ptr.offset((size - 1) as isize)) != 0u8 {
-            return Err(Error::failed(
-                "Message contains text that is not NUL-terminated".to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageContainsTextThatIsNotNULTerminated,
             ));
         }
 
@@ -2709,14 +2689,14 @@ mod wire_helpers {
         let size: u32 = (*reff).list_element_count();
 
         if (*reff).kind() != WirePointerKind::List {
-            return Err(Error::failed(
-                "Message contains non-list pointer where data was expected.".to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageContainsNonListPointerWhereDataWasExpected,
             ));
         }
 
         if (*reff).list_element_size() != Byte {
-            return Err(Error::failed(
-                "Message contains list pointer of non-bytes where data was expected.".to_string(),
+            return Err(Error::from_kind(
+                ErrorKind::MessageContainsListPointerOfNonBytesWhereDataWasExpected,
             ));
         }
 
@@ -2739,16 +2719,27 @@ fn zero_pointer() -> *const WirePointer {
 
 static NULL_ARENA: NullArena = NullArena;
 
+#[cfg(feature = "alloc")]
 pub type CapTable = Vec<Option<Box<dyn ClientHook>>>;
+
+#[cfg(not(feature = "alloc"))]
+pub struct CapTable;
 
 #[derive(Copy, Clone)]
 pub enum CapTableReader {
     // At one point, we had a `Dummy` variant here, but that ended up
     // making values of this type take 16 bytes of memory. Now we instead
     // represent a null CapTableReader with `Plain(ptr::null())`.
-    Plain(*const Vec<Option<Box<dyn ClientHook>>>),
+    Plain(*const CapTable),
 }
 
+impl Default for CapTableReader {
+    fn default() -> Self {
+        CapTableReader::Plain(ptr::null())
+    }
+}
+
+#[cfg(feature = "alloc")]
 impl CapTableReader {
     pub fn extract_cap(&self, index: usize) -> Option<Box<dyn ClientHook>> {
         match *self {
@@ -2772,7 +2763,13 @@ pub enum CapTableBuilder {
     // At one point, we had a `Dummy` variant here, but that ended up
     // making values of this type take 16 bytes of memory. Now we instead
     // represent a null CapTableBuilder with `Plain(ptr::null_mut())`.
-    Plain(*mut Vec<Option<Box<dyn ClientHook>>>),
+    Plain(*mut CapTable),
+}
+
+impl Default for CapTableBuilder {
+    fn default() -> Self {
+        CapTableBuilder::Plain(ptr::null_mut())
+    }
 }
 
 impl CapTableBuilder {
@@ -2782,6 +2779,7 @@ impl CapTableBuilder {
         }
     }
 
+    #[cfg(feature = "alloc")]
     pub fn extract_cap(&self, index: usize) -> Option<Box<dyn ClientHook>> {
         match *self {
             Self::Plain(hooks) => {
@@ -2798,6 +2796,7 @@ impl CapTableBuilder {
         }
     }
 
+    #[cfg(feature = "alloc")]
     pub fn inject_cap(&mut self, cap: Box<dyn ClientHook>) -> usize {
         match *self {
             Self::Plain(hooks) => {
@@ -2814,6 +2813,7 @@ impl CapTableBuilder {
         }
     }
 
+    #[cfg(feature = "alloc")]
     pub fn drop_cap(&mut self, index: usize) {
         match *self {
             Self::Plain(hooks) => {
@@ -2846,7 +2846,7 @@ impl<'a> PointerReader<'a> {
         PointerReader {
             arena: &NULL_ARENA,
             segment_id: 0,
-            cap_table: CapTableReader::Plain(ptr::null()),
+            cap_table: Default::default(),
             pointer: ptr::null(),
             nesting_limit: 0x7fffffff,
         }
@@ -2869,7 +2869,7 @@ impl<'a> PointerReader<'a> {
         Ok(PointerReader {
             arena,
             segment_id,
-            cap_table: CapTableReader::Plain(ptr::null()),
+            cap_table: Default::default(),
             pointer: location as *const _,
             nesting_limit,
         })
@@ -2886,7 +2886,7 @@ impl<'a> PointerReader<'a> {
         PointerReader {
             arena: &NULL_ARENA,
             segment_id: 0,
-            cap_table: CapTableReader::Plain(ptr::null()),
+            cap_table: Default::default(),
             pointer: location as *const _,
             nesting_limit: 0x7fffffff,
         }
@@ -3001,6 +3001,7 @@ impl<'a> PointerReader<'a> {
         unsafe { wire_helpers::read_data_pointer(self.arena, self.segment_id, reff, default) }
     }
 
+    #[cfg(feature = "alloc")]
     pub fn get_capability(&self) -> Result<Box<dyn ClientHook>> {
         let reff: *const WirePointer = if self.pointer.is_null() {
             zero_pointer()
@@ -3026,16 +3027,14 @@ impl<'a> PointerReader<'a> {
                 unsafe { wire_helpers::follow_fars(self.arena, self.pointer, self.segment_id)? };
 
             match unsafe { (*reff).kind() } {
-                WirePointerKind::Far => {
-                    Err(crate::Error::failed(String::from("Unexpected FAR pointer")))
-                }
+                WirePointerKind::Far => Err(Error::from_kind(ErrorKind::UnexepectedFarPointer)),
                 WirePointerKind::Struct => Ok(PointerType::Struct),
                 WirePointerKind::List => Ok(PointerType::List),
                 WirePointerKind::Other => {
                     if unsafe { (*reff).is_capability() } {
                         Ok(PointerType::Capability)
                     } else {
-                        Err(crate::Error::failed(String::from("Unknown pointer type")))
+                        Err(Error::from_kind(ErrorKind::UnknownPointerType))
                     }
                 }
             }
@@ -3082,7 +3081,7 @@ impl<'a> PointerBuilder<'a> {
     pub fn get_root(arena: &'a mut dyn BuilderArena, segment_id: u32, location: *mut u8) -> Self {
         PointerBuilder {
             arena,
-            cap_table: CapTableBuilder::Plain(ptr::null_mut()),
+            cap_table: Default::default(),
             segment_id,
             pointer: location as *mut _,
         }
@@ -3186,6 +3185,7 @@ impl<'a> PointerBuilder<'a> {
         }
     }
 
+    #[cfg(feature = "alloc")]
     pub fn get_capability(&self) -> Result<Box<dyn ClientHook>> {
         unsafe {
             wire_helpers::read_capability_pointer(
@@ -3296,6 +3296,7 @@ impl<'a> PointerBuilder<'a> {
         }
     }
 
+    #[cfg(feature = "alloc")]
     pub fn set_capability(&mut self, cap: Box<dyn ClientHook>) {
         wire_helpers::set_capability_pointer(
             self.arena,
@@ -3378,7 +3379,7 @@ impl<'a> StructReader<'a> {
         StructReader {
             arena: &NULL_ARENA,
             segment_id: 0,
-            cap_table: CapTableReader::Plain(ptr::null()),
+            cap_table: Default::default(),
             data: ptr::null(),
             pointers: ptr::null(),
             data_size: 0,
@@ -3478,6 +3479,15 @@ impl<'a> StructReader<'a> {
             }
         } else {
             PointerReader::new_default()
+        }
+    }
+
+    #[inline]
+    pub fn is_pointer_field_null(&self, ptr_index: WirePointerCount) -> bool {
+        if ptr_index < self.pointer_count as WirePointerCount {
+            unsafe { (*self.pointers.add(ptr_index)).is_null() }
+        } else {
+            true
         }
     }
 
@@ -3707,9 +3717,9 @@ impl<'a> StructBuilder<'a> {
             if (shared_data_size == 0 || other.data == self.data)
                 && (shared_pointer_count == 0 || other.pointers == self.pointers)
             {
-                return Err(crate::Error::failed(String::from(
-                    "Only one of the section pointers is pointing to ourself",
-                )));
+                return Err(Error::from_kind(
+                    ErrorKind::OnlyOneOfTheSectionPointersIsPointingToOurself,
+                ));
             }
 
             // So `other` appears to be a reader for this same struct. No copying is needed.
@@ -3794,7 +3804,7 @@ impl<'a> ListReader<'a> {
         ListReader {
             arena: &NULL_ARENA,
             segment_id: 0,
-            cap_table: CapTableReader::Plain(ptr::null()),
+            cap_table: Default::default(),
             ptr: ptr::null(),
             element_count: 0,
             element_size: ElementSize::Void,
@@ -4003,7 +4013,7 @@ impl<'a> ListBuilder<'a> {
         ListBuilder {
             arena,
             segment_id: 0,
-            cap_table: CapTableBuilder::Plain(ptr::null_mut()),
+            cap_table: Default::default(),
             ptr: ptr::null_mut(),
             element_count: 0,
             element_size: ElementSize::Void,

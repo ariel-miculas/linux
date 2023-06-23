@@ -25,12 +25,13 @@
 //! [packed stream encoding](https://capnproto.org/encoding.html#packing).
 
 use crate::io::{BufRead, Read, Write};
-use alloc::string::ToString;
 use core::{mem, ptr, slice};
 
+#[cfg(feature = "alloc")]
 use crate::message;
+#[cfg(feature = "alloc")]
 use crate::serialize;
-use crate::Result;
+use crate::{Error, ErrorKind, Result};
 
 /// A `BufRead` wrapper that unpacks packed data. Returns an error on any `read()`
 /// call that would end within an all-zero (tag 0x00) or uncompressed (tag 0xff)
@@ -70,7 +71,7 @@ macro_rules! refresh_buffer(
             $size = ptr_sub($in_end, $in_ptr);
             $buffer_begin = b;
             if $size == 0 {
-                return Err(crate::Error::failed("Premature end of packed input.".to_string()));
+                return Err(Error::from_kind(ErrorKind::PrematureEndOfPackedInput));
             }
         }
         );
@@ -167,8 +168,8 @@ where
                     in_ptr = in_ptr.offset(1);
 
                     if run_length > ptr_sub(out_end, out) {
-                        return Err(crate::Error::failed(
-                            "Packed input did not end cleanly on a segment boundary.".to_string(),
+                        return Err(Error::from_kind(
+                            ErrorKind::PackedInputDidNotEndCleanlyOnASegmentBoundary,
                         ));
                     }
 
@@ -184,8 +185,8 @@ where
                     in_ptr = in_ptr.offset(1);
 
                     if run_length > ptr_sub(out_end, out) {
-                        return Err(crate::Error::failed(
-                            "Packed input did not end cleanly on a segment boundary.".to_string(),
+                        return Err(Error::from_kind(
+                            ErrorKind::PackedInputDidNotEndCleanlyOnASegmentBoundary,
                         ));
                     }
 
@@ -232,6 +233,7 @@ where
 }
 
 /// Reads a packed message from a stream using the provided options.
+#[cfg(feature = "alloc")]
 pub fn read_message<R>(
     read: R,
     options: message::ReaderOptions,
@@ -244,6 +246,7 @@ where
 }
 
 /// Like read_message(), but returns None instead of an error if there are zero bytes left in `read`.
+#[cfg(feature = "alloc")]
 pub fn try_read_message<R>(
     read: R,
     options: message::ReaderOptions,
@@ -407,6 +410,7 @@ where
 ///
 /// The only source of errors from this function are `write.write_all()` calls. If you pass in
 /// a writer that never returns an error, then this function will never return an error.
+#[cfg(feature = "alloc")]
 pub fn write_message<W, A>(write: W, message: &crate::message::Builder<A>) -> Result<()>
 where
     W: Write,
@@ -416,9 +420,9 @@ where
     serialize::write_message(packed_write, message)
 }
 
+#[cfg(feature = "alloc")]
 #[cfg(test)]
 mod tests {
-    use alloc::string::ToString;
     use alloc::vec::Vec;
 
     use crate::io::{Read, Write};
@@ -429,6 +433,7 @@ mod tests {
     use crate::message::ReaderOptions;
     use crate::serialize::test::write_message_segments;
     use crate::serialize_packed::{PackedRead, PackedWrite};
+    use crate::ErrorKind;
 
     #[test]
     pub fn premature_eof() {
@@ -566,8 +571,8 @@ mod tests {
             Ok(_) => panic!("should have been an error"),
             Err(e) => {
                 assert_eq!(
-                    e.to_string(),
-                    "Failed: Packed input did not end cleanly on a segment boundary."
+                    e.kind,
+                    ErrorKind::PackedInputDidNotEndCleanlyOnASegmentBoundary,
                 );
             }
         }
@@ -582,7 +587,7 @@ mod tests {
             match packed_read.read_exact(&mut bytes[..]) {
                 Ok(_) => panic!("should have been an error"),
                 Err(e) => {
-                    assert_eq!(e.to_string(), "Failed: Premature end of packed input.");
+                    assert_eq!(e.kind, ErrorKind::PrematureEndOfPackedInput);
                 }
             }
         }

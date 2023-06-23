@@ -23,10 +23,12 @@
 
 //! Untyped pointer that can be cast to any struct, list, or capability type.
 
-use alloc::boxed::Box;
-use alloc::vec::Vec;
+#[cfg(feature = "alloc")]
+use alloc::{boxed::Box, vec::Vec};
 
+#[cfg(feature = "alloc")]
 use crate::capability::FromClientHook;
+#[cfg(feature = "alloc")]
 use crate::private::capability::{ClientHook, PipelineHook, PipelineOp};
 use crate::private::layout::{PointerBuilder, PointerReader};
 use crate::traits::{FromPointerBuilder, FromPointerReader, SetPointerBuilder};
@@ -75,12 +77,14 @@ impl<'a> Reader<'a> {
         FromPointerReader::get_from_pointer(&self.reader, None)
     }
 
+    #[cfg(feature = "alloc")]
     pub fn get_as_capability<T: FromClientHook>(&self) -> Result<T> {
         Ok(FromClientHook::new(self.reader.get_capability()?))
     }
 
     //# Used by RPC system to implement pipelining. Applications
     //# generally shouldn't use this directly.
+    #[cfg(feature = "alloc")]
     pub fn get_pipelined_cap(&self, ops: &[PipelineOp]) -> Result<Box<dyn ClientHook>> {
         let mut pointer = self.reader;
 
@@ -119,6 +123,7 @@ impl<'a> crate::traits::SetPointerBuilder for Reader<'a> {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<'a> crate::traits::Imbue<'a> for Reader<'a> {
     fn imbue(&mut self, cap_table: &'a crate::private::layout::CapTable) {
         self.reader
@@ -167,6 +172,7 @@ impl<'a> Builder<'a> {
     }
 
     // XXX value should be a user client.
+    #[cfg(feature = "alloc")]
     pub fn set_as_capability(&mut self, value: Box<dyn ClientHook>) {
         self.builder.set_capability(value);
     }
@@ -201,6 +207,7 @@ impl<'a> FromPointerBuilder<'a> for Builder<'a> {
     }
 }
 
+#[cfg(feature = "alloc")]
 impl<'a> crate::traits::ImbueMut<'a> for Builder<'a> {
     fn imbue_mut(&mut self, cap_table: &'a mut crate::private::layout::CapTable) {
         self.builder
@@ -210,12 +217,15 @@ impl<'a> crate::traits::ImbueMut<'a> for Builder<'a> {
 
 pub struct Pipeline {
     // XXX this should not be public
+    #[cfg(feature = "alloc")]
     pub hook: Box<dyn PipelineHook>,
 
+    #[cfg(feature = "alloc")]
     ops: Vec<PipelineOp>,
 }
 
 impl Pipeline {
+    #[cfg(feature = "alloc")]
     pub fn new(hook: Box<dyn PipelineHook>) -> Self {
         Self {
             hook,
@@ -223,6 +233,7 @@ impl Pipeline {
         }
     }
 
+    #[cfg(feature = "alloc")]
     pub fn noop(&self) -> Self {
         Self {
             hook: self.hook.add_ref(),
@@ -230,6 +241,12 @@ impl Pipeline {
         }
     }
 
+    #[cfg(not(feature = "alloc"))]
+    pub fn noop(&self) -> Self {
+        Self {}
+    }
+
+    #[cfg(feature = "alloc")]
     pub fn get_pointer_field(&self, pointer_index: u16) -> Self {
         let mut new_ops = Vec::with_capacity(self.ops.len() + 1);
         for op in &self.ops {
@@ -242,6 +259,12 @@ impl Pipeline {
         }
     }
 
+    #[cfg(not(feature = "alloc"))]
+    pub fn get_pointer_field(&self, _pointer_index: u16) -> Self {
+        Self {}
+    }
+
+    #[cfg(feature = "alloc")]
     pub fn as_cap(&self) -> Box<dyn ClientHook> {
         self.hook.get_pipelined_cap(&self.ops)
     }
@@ -265,6 +288,7 @@ impl<'a> From<Builder<'a>> for crate::dynamic_value::Builder<'a> {
     }
 }
 
+#[cfg(feature = "alloc")]
 #[test]
 fn init_clears_value() {
     let mut message = crate::message::Builder::new_default();
