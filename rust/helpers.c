@@ -29,6 +29,7 @@
 #include <linux/err.h>
 #include <linux/errname.h>
 #include <linux/fs.h>
+#include <linux/fs_parser.h>
 #include <linux/highmem.h>
 #include <linux/mm.h>
 #include <linux/mutex.h>
@@ -337,6 +338,21 @@ void rust_helper_set_delayed_call(struct delayed_call *call,
 	set_delayed_call(call, fn, arg);
 }
 EXPORT_SYMBOL_GPL(rust_helper_set_delayed_call);
+
+struct inode *rust_helper_d_inode(const struct dentry *dentry)
+{
+	return d_inode(dentry);
+}
+EXPORT_SYMBOL_GPL(rust_helper_d_inode);
+
+int rust_helper_fs_parse(struct fs_context *fc,
+		const struct fs_parameter_spec *desc,
+		struct fs_parameter *param,
+		struct fs_parse_result *result)
+{
+	return fs_parse(fc, desc, param, result);
+}
+EXPORT_SYMBOL_GPL(rust_helper_fs_parse);
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
