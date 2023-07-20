@@ -31,6 +31,7 @@
 #include <linux/fs.h>
 #include <linux/highmem.h>
 #include <linux/mm.h>
+#include <linux/fs.h>
 #include <linux/mutex.h>
 #include <linux/pagemap.h>
 #include <linux/refcount.h>
@@ -285,6 +286,12 @@ sector_t rust_helper_bdev_nr_sectors(struct block_device *bdev)
 	return bdev_nr_sectors(bdev);
 }
 EXPORT_SYMBOL_GPL(rust_helper_bdev_nr_sectors);
+
+struct file *rust_helper_get_file(struct file *f)
+{
+	return get_file(f);
+}
+EXPORT_SYMBOL_GPL(rust_helper_get_file);
 
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
