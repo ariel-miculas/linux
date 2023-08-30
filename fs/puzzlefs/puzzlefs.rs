@@ -1,0 +1,223 @@
+// SPDX-License-Identifier: GPL-2.0
+
+//! PuzzleFS, a next-generation container filesystem.
+
+use kernel::fs::{
+    address_space, dentry, dentry::DEntry, file, file::File, inode, inode::INode, sb, Offset,
+};
+use kernel::prelude::*;
+use kernel::types::{ARef, Either, Locked};
+use kernel::{c_str, folio::Folio, folio::PageCache, fs, str::CString, time::UNIX_EPOCH, user};
+
+kernel::module_fs! {
+    type: PuzzleFsModule,
+    name: "PuzzleFS",
+    author: "Ariel Miculas",
+    description: "A next-generation container filesystem",
+    license: "GPL",
+}
+
+struct Entry {
+    name: &'static [u8],
+    ino: u64,
+    etype: inode::Type,
+    contents: &'static [u8],
+}
+
+const ENTRIES: [Entry; 4] = [
+    Entry {
+        name: b".",
+        ino: 1,
+        etype: inode::Type::Dir,
+        contents: b"",
+    },
+    Entry {
+        name: b"..",
+        ino: 1,
+        etype: inode::Type::Dir,
+        contents: b"",
+    },
+    Entry {
+        name: b"test.txt",
+        ino: 2,
+        etype: inode::Type::Reg,
+        contents: b"hello world\n",
+    },
+    Entry {
+        name: b"link.txt",
+        ino: 3,
+        etype: inode::Type::Lnk(None),
+        contents: b"./test.txt",
+    },
+];
+
+const DIR_FOPS: file::Ops<PuzzleFsModule> = file::Ops::new::<PuzzleFsModule>();
+const DIR_IOPS: inode::Ops<PuzzleFsModule> = inode::Ops::new::<PuzzleFsModule>();
+const FILE_AOPS: address_space::Ops<PuzzleFsModule> = address_space::Ops::new::<PuzzleFsModule>();
+
+struct PuzzleFsModule;
+
+impl PuzzleFsModule {
+    fn iget(sb: &sb::SuperBlock<Self>, e: &'static Entry) -> Result<ARef<INode<Self>>> {
+        let mut new = match sb.get_or_create_inode(e.ino)? {
+            Either::Left(existing) => return Ok(existing),
+            Either::Right(new) => new,
+        };
+
+        let (mode, nlink, size, typ) = match e.etype {
+            inode::Type::Dir => {
+                new.set_iops(DIR_IOPS).set_fops(DIR_FOPS);
+                (0o555, 2, ENTRIES.len().try_into()?, inode::Type::Dir)
+            }
+            inode::Type::Reg => {
+                new.set_fops(file::Ops::generic_ro_file())
+                    .set_aops(FILE_AOPS);
+                (0o444, 1, e.contents.len().try_into()?, inode::Type::Reg)
+            }
+            inode::Type::Lnk(_) => {
+                new.set_iops(inode::Ops::simple_symlink_inode());
+                (
+                    0o444,
+                    1,
+                    e.contents.len().try_into()?,
+                    inode::Type::Lnk(Some(e.contents.try_into()?)),
+                )
+            }
+            _ => return Err(ENOENT),
+        };
+
+        new.init(inode::Params {
+            typ,
+            mode,
+            size,
+            blocks: (u64::try_from(size)? + 511) / 512,
+            nlink,
+            uid: 0,
+            gid: 0,
+            atime: UNIX_EPOCH,
+            ctime: UNIX_EPOCH,
+            mtime: UNIX_EPOCH,
+            value: e,
+        })
+    }
+}
+
+impl fs::FileSystem for PuzzleFsModule {
+    type Data = ();
+    type INodeData = &'static Entry;
+    const NAME: &'static CStr = c_str!("puzzlefs");
+
+    fn super_params(_sb: &sb::SuperBlock<Self, sb::New>) -> Result<sb::Params<()>> {
+        Ok(sb::Params {
+            magic: 0x7a7a7570,
+            blocksize_bits: 12,
+            maxbytes: fs::MAX_LFS_FILESIZE,
+            time_gran: 1,
+            data: (),
+        })
+    }
+
+    fn init_root(sb: &sb::SuperBlock<Self>) -> Result<dentry::Root<Self>> {
+        let inode = Self::iget(sb, &ENTRIES[0])?;
+        dentry::Root::try_new(inode)
+    }
+}
+
+#[vtable]
+impl inode::Operations for PuzzleFsModule {
+    type FileSystem = Self;
+
+    fn lookup(
+        parent: &INode<Self>,
+        dentry: dentry::Unhashed<'_, Self>,
+    ) -> Result<Option<ARef<DEntry<Self>>>> {
+        if parent.ino() != 1 {
+            return dentry.splice_alias(None);
+        }
+
+        let name = dentry.name();
+        for e in &ENTRIES {
+            if name == e.name {
+                let inode = Self::iget(parent.super_block(), e)?;
+                return dentry.splice_alias(Some(inode));
+            }
+        }
+
+        dentry.splice_alias(None)
+    }
+}
+
+struct Link;
+#[vtable]
+impl inode::Operations for Link {
+    type FileSystem = PuzzleFsModule;
+
+    fn get_link<'a>(
+        dentry: Option<&DEntry<PuzzleFsModule>>,
+        inode: &'a INode<PuzzleFsModule>,
+    ) -> Result<Either<CString, &'a CStr>> {
+        if dentry.is_none() {
+            return Err(ECHILD);
+        }
+
+        let name_buf = inode.data().contents;
+        let mut name = Box::try_new_slice(name_buf.len().checked_add(1).ok_or(ENOMEM)?, b'\0')?;
+        name[..name_buf.len()].copy_from_slice(name_buf);
+        Ok(Either::Left(name.try_into()?))
+    }
+}
+
+#[vtable]
+impl address_space::Operations for PuzzleFsModule {
+    type FileSystem = Self;
+
+    fn read_folio(_: Option<&File<Self>>, mut folio: Locked<&Folio<PageCache<Self>>>) -> Result {
+        let data = folio.inode().data().contents;
+        let pos = usize::try_from(folio.pos()).unwrap_or(usize::MAX);
+        let copied = if pos >= data.len() {
+            0
+        } else {
+            let to_copy = core::cmp::min(data.len() - pos, folio.size());
+            folio.write(0, &data[pos..][..to_copy])?;
+            to_copy
+        };
+
+        folio.zero_out(copied, folio.size() - copied)?;
+        folio.mark_uptodate();
+        folio.flush_dcache();
+
+        Ok(())
+    }
+}
+
+#[vtable]
+impl file::Operations for PuzzleFsModule {
+    type FileSystem = Self;
+
+    fn seek(file: &File<Self>, offset: Offset, whence: file::Whence) -> Result<Offset> {
+        file::generic_seek(file, offset, whence)
+    }
+
+    fn read(_: &File<Self>, _: &mut user::Writer, _: &mut Offset) -> Result<usize> {
+        Err(EISDIR)
+    }
+
+    fn read_dir(file: &File<Self>, emitter: &mut file::DirEmitter) -> Result {
+        if file.inode().ino() != 1 {
+            return Ok(());
+        }
+
+        let pos = emitter.pos();
+        if pos >= ENTRIES.len().try_into()? {
+            return Ok(());
+        }
+
+        for e in ENTRIES.iter().skip(pos.try_into()?) {
+            if !emitter.emit(1, e.name, e.ino, (&e.etype).into()) {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+}

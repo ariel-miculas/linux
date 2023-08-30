@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+
+config PUZZLEFS_FS
+	tristate "PuzzleFS file system support"
+	depends on RUST
+	help
+	  This option builds PuzzleFS, a next-generation container filesystem.
+
+	  To compile this as a module, choose M here:
+	  the module will be called puzzlefs.
+
+	  If unsure, say N.
+
