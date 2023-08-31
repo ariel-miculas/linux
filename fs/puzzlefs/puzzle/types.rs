@@ -5,6 +5,7 @@ use capnp::{message, serialize};
 use core::fmt;
 use hex::{encode_hex_iter, FromHexError};
 use kernel::file;
+use kernel::prelude::{ENOENT, ENOTDIR};
 use kernel::str::CStr;
 
 pub(crate) mod manifest_capnp;
@@ -114,6 +115,36 @@ impl Inode {
             permissions: reader.get_permissions(),
             additional: InodeAdditional::from_capnp(reader.get_additional()?)?,
         })
+    }
+
+    pub(crate) fn dir_entries(&self) -> Result<&Vec<DirEnt>> {
+        match &self.mode {
+            InodeMode::Dir { dir_list } => Ok(&dir_list.entries),
+            _ => Err(WireFormatError::from_errno(ENOTDIR)),
+        }
+    }
+
+    pub(crate) fn dir_lookup(&self, name: &[u8]) -> Result<u64> {
+        let entries = self.dir_entries()?;
+        entries
+            .iter()
+            .find(|dir_ent| dir_ent.name == name)
+            .map(|dir_ent| dir_ent.ino)
+            .ok_or_else(|| WireFormatError::from_errno(ENOENT))
+    }
+
+    pub(crate) fn size(&self) -> Result<i64> {
+        match &self.mode {
+            InodeMode::Dir { dir_list } => Ok(dir_list.entries.len().try_into()?),
+            InodeMode::File { chunks } => {
+                let mut size = 0;
+                for chunk in chunks {
+                    size += chunk.len;
+                }
+                Ok(size.try_into()?)
+            }
+            _ => todo!(),
+        }
     }
 }
 
