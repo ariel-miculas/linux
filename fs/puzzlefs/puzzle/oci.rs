@@ -1,10 +1,11 @@
-use crate::puzzle::error::Result;
-use crate::puzzle::types::{Digest, MetadataBlob, Rootfs};
+use crate::puzzle::error::{Result, WireFormatError};
+use crate::puzzle::types::{BlobRef, Digest, MetadataBlob, Rootfs};
 use kernel::c_str;
 use kernel::file;
 use kernel::file::RegularFile;
 use kernel::mount::Vfsmount;
 use kernel::pr_debug;
+use kernel::prelude::ENOTSUPP;
 use kernel::str::{CStr, CString};
 
 #[derive(Debug)]
@@ -47,5 +48,23 @@ impl Image {
         let digest = Digest::try_from(path)?;
         let rootfs = Rootfs::open(self.open_raw_blob(&digest)?)?;
         Ok(rootfs)
+    }
+
+    pub(crate) fn fill_from_chunk(
+        &self,
+        chunk: BlobRef,
+        addl_offset: u64,
+        buf: &mut [u8],
+    ) -> Result<usize> {
+        let digest = &<Digest>::try_from(chunk)?;
+
+        let blob = if chunk.compressed {
+            return Err(WireFormatError::KernelError(ENOTSUPP));
+        } else {
+            self.open_raw_blob(digest)?
+        };
+
+        let n = blob.read_with_offset(buf, chunk.offset + addl_offset)?;
+        Ok(n)
     }
 }
