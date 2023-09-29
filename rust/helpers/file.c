@@ -19,3 +19,16 @@ struct dentry *rust_helper_dget(struct dentry *dentry)
     return dget(dentry);
 }
 EXPORT_SYMBOL_GPL(rust_helper_dget);
+
+void rust_helper_i_uid_write(struct inode *inode, uid_t uid)
+{
+    i_uid_write(inode, uid);
+}
+EXPORT_SYMBOL_GPL(rust_helper_i_uid_write);
+
+void rust_helper_i_gid_write(struct inode *inode, gid_t gid)
+{
+    i_gid_write(inode, gid);
+}
+EXPORT_SYMBOL_GPL(rust_helper_i_gid_write);
+

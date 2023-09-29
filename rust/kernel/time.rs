@@ -116,6 +116,15 @@ impl Timespec {
             },
         })
     }
+
+    pub fn sec(&self) -> i64 {
+        self.t.tv_sec
+    }
+
+    pub fn nsec(&self) -> u32 {
+        // tv_nsec should fit into u32, this is the type used by `Self::new`
+        self.t.tv_nsec.try_into().unwrap()
+    }
 }
 
 impl From<Timespec> for bindings::timespec64 {
