@@ -40,6 +40,7 @@ pub mod ioctl;
 #[cfg(CONFIG_KUNIT)]
 pub mod kunit;
 pub mod list;
+pub mod mem_cache;
 #[cfg(CONFIG_NET)]
 pub mod net;
 pub mod page;
