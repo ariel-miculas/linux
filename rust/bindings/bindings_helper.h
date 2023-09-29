@@ -18,6 +18,7 @@
 #include <linux/fs_context.h>
 #include <linux/jiffies.h>
 #include <linux/mdio.h>
+#include <linux/pagemap.h>
 #include <linux/phy.h>
 #include <linux/refcount.h>
 #include <linux/sched.h>
