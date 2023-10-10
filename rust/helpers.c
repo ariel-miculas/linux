@@ -293,6 +293,12 @@ struct file *rust_helper_get_file(struct file *f)
 }
 EXPORT_SYMBOL_GPL(rust_helper_get_file);
 
+struct inode *rust_helper_d_inode(const struct dentry *dentry)
+{
+	return d_inode(dentry);
+}
+EXPORT_SYMBOL_GPL(rust_helper_d_inode);
+
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
  * use it in contexts where Rust expects a `usize` like slice (array) indices.
