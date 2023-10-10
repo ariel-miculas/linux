@@ -104,8 +104,8 @@ impl fs::FileSystem for PuzzleFsModule {
 
     fn super_params(_sb: &sb::SuperBlock<Self, sb::New>) -> Result<sb::Params<Box<PuzzleFS>>> {
         let puzzlefs = PuzzleFS::open(
-            c_str!("/home/puzzlefs_oci"),
-            c_str!("83aa96c40a20671edc4490cfefadbb487b2ab23dfc0570049b56f0cc49b56eaf"),
+            c_str!("/home/puzzlefs_xattr"),
+            c_str!("ed63ace21eccceabab08d89afb75e94dae47973f82a17a172396a19ea953c8ab"),
         );
 
         if let Err(ref e) = puzzlefs {
@@ -126,6 +126,36 @@ impl fs::FileSystem for PuzzleFsModule {
         let inode = Self::iget(sb, 1)?;
         dentry::Root::try_new(inode)
     }
+
+    fn read_xattr(
+        _dentry: &DEntry<Self>,
+        inode: &INode<Self>,
+        name: &CStr,
+        outbuf: &mut [u8],
+    ) -> Result<usize> {
+        let inode = inode.data();
+        let readonly = outbuf.len() == 0;
+        // pr_info!("outbuf len {}\n", outbuf.len());
+
+        if let Some(add) = &inode.additional {
+            let xattr = add
+                .xattrs
+                .iter()
+                .find(|elem| elem.key == name.as_bytes())
+                .ok_or(ENODATA)?;
+            if readonly {
+                return Ok(xattr.val.len());
+            }
+
+            if xattr.val.len() > outbuf.len() {
+                return Err(ERANGE);
+            }
+
+            outbuf[0..xattr.val.len()].copy_from_slice(xattr.val.as_slice());
+            return Ok(xattr.val.len());
+        }
+        Err(ENODATA)
+    }
 }
 
 #[vtable]
@@ -143,6 +173,22 @@ impl inode::Operations for PuzzleFsModule {
         } else {
             dentry.splice_alias(None)
         }
+    }
+
+    fn listxattr(
+        inode: &INode<Self>,
+        mut add_entry: impl FnMut(&[i8]) -> Result<()>,
+    ) -> Result<()> {
+        let inode = inode.data();
+
+        if let Some(add) = &inode.additional {
+            for xattr in &add.xattrs {
+                // convert a u8 slice into an i8 slice
+                let i8slice = unsafe { &*(xattr.key.as_slice() as *const _ as *const [i8]) };
+                add_entry(i8slice)?;
+            }
+        }
+        Ok(())
     }
 }
 

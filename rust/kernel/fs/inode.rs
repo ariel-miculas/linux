@@ -9,7 +9,7 @@
 use super::{
     address_space, dentry, dentry::DEntry, file, mode, sb::SuperBlock, FileSystem, Offset,
 };
-use crate::error::{code::*, Result};
+use crate::error::{code::*, from_result, Result};
 use crate::types::{ARef, AlwaysRefCounted, Either, ForeignOwnable, Opaque};
 use crate::{bindings, container_of, mem_cache::MemCache, str::CStr, str::CString, time::Timespec};
 use core::mem::{size_of, ManuallyDrop, MaybeUninit};
@@ -43,6 +43,14 @@ pub trait Operations {
         _dentry: dentry::Unhashed<'_, Self::FileSystem>,
     ) -> Result<Option<ARef<DEntry<Self::FileSystem>>>> {
         Err(ENOTSUPP)
+    }
+
+    /// Get extended attributes list
+    fn listxattr<'a>(
+        _inode: &'a INode<Self::FileSystem>,
+        mut _add_entry: impl FnMut(&[i8]) -> Result<()>,
+    ) -> Result<()> {
+        Err(ENOSYS)
     }
 }
 
@@ -523,7 +531,7 @@ impl<T: FileSystem + ?Sized> Ops<T> {
                 rename: None,
                 setattr: None,
                 getattr: None,
-                listxattr: None,
+                listxattr: Some(Self::listxattr_callback),
                 fiemap: None,
                 update_time: None,
                 atomic_open: None,
@@ -534,6 +542,59 @@ impl<T: FileSystem + ?Sized> Ops<T> {
                 fileattr_get: None,
                 get_offset_ctx: None,
             };
+            extern "C" fn listxattr_callback(
+                dentry: *mut bindings::dentry,
+                buffer: *mut core::ffi::c_char,
+                buffer_size: usize,
+            ) -> isize {
+                from_result(|| {
+                    // SAFETY: The C API guarantees that `dentry` is valid for read.
+                    let inode = unsafe { bindings::d_inode(dentry) };
+                    // SAFETY: The C API guarantees that `d_inode` inside `dentry` is valid for read.
+                    let inode = unsafe { INode::from_raw(inode) };
+
+                    // `buffer_size` should be 0 when `buffer` is NULL, but we enforce it
+                    let (mut buffer_ptr, buffer_size) = match ptr::NonNull::new(buffer) {
+                        Some(buf) => (buf, buffer_size),
+                        None => (ptr::NonNull::dangling(), 0),
+                    };
+
+                    // SAFETY: The C API guarantees that `buffer` is at least `buffer_size` bytes in
+                    // length. Also, when `buffer_size` is 0, `buffer_ptr` is NonNull::dangling, as
+                    // suggested by `from_raw_parts_mut` documentation
+                    let outbuf = unsafe {
+                        core::slice::from_raw_parts_mut(buffer_ptr.as_mut(), buffer_size)
+                    };
+
+                    let mut offset = 0;
+                    let mut total_len = 0;
+
+                    //  The extended attributes keys must be placed into the output buffer sequentially,
+                    //  separated by the NUL character. We do this in the callback because it simplifies
+                    //  the implementation of the `listxattr` abstraction: the user just calls the
+                    //  add_entry function for each extended attribute key, passing a slice.
+                    T::listxattr(inode, |xattr_key| {
+                        let len = xattr_key.len();
+                        total_len += isize::try_from(len)? + 1;
+
+                        if buffer_size == 0 {
+                            return Ok(());
+                        }
+
+                        let max = offset + len + 1;
+                        if max > buffer_size {
+                            return Err(ERANGE);
+                        }
+
+                        outbuf[offset..max - 1].copy_from_slice(xattr_key);
+                        outbuf[max - 1] = 0;
+                        offset = max;
+                        Ok(())
+                    })?;
+
+                    Ok(total_len)
+                })
+            }
         }
         Self(&Table::<U>::TABLE, PhantomData)
     }
