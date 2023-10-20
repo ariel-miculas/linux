@@ -76,13 +76,13 @@ pub trait FileSystem {
     const SUPER_TYPE: Super = Super::Independent;
 
     /// Returns the parameters to initialise a super block.
-    fn super_params(sb: &NewSuperBlock<Self>) -> Result<SuperParams<Self::Data>>;
+    fn super_params(sb: &SuperBlock<Self, NewSuperBlockState>) -> Result<SuperParams<Self::Data>>;
 
     /// Initialises and returns the root inode of the given superblock.
     ///
     /// This is called during initialisation of a superblock after [`FileSystem::super_params`] has
     /// completed successfully.
-    fn init_root(sb: &SuperBlock<Self>) -> Result<ARef<INode<Self>>>;
+    fn init_root(sb: &SuperBlock<Self, InitializedSuperBlockState>) -> Result<ARef<INode<Self>>>;
 
     /// Reads directory entries from directory inodes.
     ///
@@ -104,7 +104,7 @@ pub trait FileSystem {
     }
 
     /// Get filesystem statistics.
-    fn statfs(_sb: &SuperBlock<Self>) -> Result<Stat> {
+    fn statfs(_sb: &SuperBlock<Self, InitializedSuperBlockState>) -> Result<Stat> {
         Err(ENOSYS)
     }
 
@@ -332,7 +332,7 @@ impl<T: FileSystem + ?Sized> INode<T> {
     }
 
     /// Returns the super-block that owns the inode.
-    pub fn super_block(&self) -> &SuperBlock<T> {
+    pub fn super_block(&self) -> &SuperBlock<T, InitializedSuperBlockState> {
         // SAFETY: `i_sb` is immutable, and `self` is guaranteed to be valid by the existence of a
         // shared reference (&self) to it.
         unsafe { &*(*self.0.get()).i_sb.cast() }
@@ -545,13 +545,26 @@ pub struct INodeParams<T> {
     pub value: T,
 }
 
+pub trait SuperBlockState {}
+/// A superblock that is still being initialised.
+///
+/// # Invariants
+///
+/// The superblock is a newly-created one and this is the only active pointer to it.
+pub enum NewSuperBlockState {}
+/// An initialized superblock
+pub enum InitializedSuperBlockState {}
+
+impl SuperBlockState for NewSuperBlockState {}
+impl SuperBlockState for InitializedSuperBlockState {}
+
 /// A file system super block.
 ///
 /// Wraps the kernel's `struct super_block`.
 #[repr(transparent)]
-pub struct SuperBlock<T: FileSystem + ?Sized>(Opaque<bindings::super_block>, PhantomData<T>);
+pub struct SuperBlock<T: FileSystem + ?Sized, S: SuperBlockState>(Opaque<bindings::super_block>, PhantomData<T>, PhantomData<S>);
 
-impl<T: FileSystem + ?Sized> SuperBlock<T> {
+impl<T: FileSystem + ?Sized> SuperBlock<T, InitializedSuperBlockState> {
     /// Returns the data associated with the superblock.
     pub fn data(&self) -> <T::Data as ForeignOwnable>::Borrowed<'_> {
         // SAFETY: This method is only available after the `NeedsData` typestate, so `s_fs_info`
@@ -667,15 +680,7 @@ pub struct SuperParams<T: ForeignOwnable + Send + Sync> {
     pub data: T,
 }
 
-/// A superblock that is still being initialised.
-///
-/// # Invariants
-///
-/// The superblock is a newly-created one and this is the only active pointer to it.
-#[repr(transparent)]
-pub struct NewSuperBlock<T: FileSystem + ?Sized>(bindings::super_block, PhantomData<T>);
-
-impl<T: FileSystem + ?Sized> NewSuperBlock<T> {
+impl<T: FileSystem + ?Sized> SuperBlock<T, NewSuperBlockState> {
     /// Reads sectors.
     ///
     /// `count` must be such that the total size doesn't exceed a page.
@@ -698,7 +703,7 @@ impl<T: FileSystem + ?Sized> NewSuperBlock<T> {
         unsafe {
             bindings::bio_init(
                 &mut bio,
-                self.0.s_bdev,
+                (*self.0.get()).s_bdev,
                 bvec.get(),
                 1,
                 bindings::req_op_REQ_OP_READ,
@@ -733,7 +738,7 @@ impl<T: FileSystem + ?Sized> NewSuperBlock<T> {
         match T::SUPER_TYPE {
             // The superblock is valid and given that it's a blockdev superblock it must have a
             // valid `s_bdev`.
-            Super::BlockDev => Ok(unsafe { bindings::bdev_nr_sectors(self.0.s_bdev) }),
+            Super::BlockDev => Ok(unsafe { bindings::bdev_nr_sectors((*self.0.get()).s_bdev) }),
             _ => Err(EIO),
         }
     }
@@ -775,21 +780,23 @@ impl<T: FileSystem + ?Sized> Tables<T> {
             let sb = unsafe { &mut *sb_ptr.cast() };
             let params = T::super_params(sb)?;
 
-            sb.0.s_magic = params.magic as _;
-            sb.0.s_op = &Tables::<T>::SUPER_BLOCK;
-            sb.0.s_xattr = &Tables::<T>::XATTR_HANDLERS[0];
-            sb.0.s_maxbytes = params.maxbytes;
-            sb.0.s_time_gran = params.time_gran;
-            sb.0.s_blocksize_bits = params.blocksize_bits;
-            sb.0.s_blocksize = 1;
-            if sb.0.s_blocksize.leading_zeros() < params.blocksize_bits.into() {
-                return Err(EINVAL);
-            }
-            sb.0.s_blocksize = 1 << sb.0.s_blocksize_bits;
-            sb.0.s_flags |= bindings::SB_RDONLY;
+            unsafe {
+                (*sb.0.get()).s_magic = params.magic as _;
+                (*sb.0.get()).s_op = &Tables::<T>::SUPER_BLOCK;
+                (*sb.0.get()).s_xattr = &Tables::<T>::XATTR_HANDLERS[0];
+                (*sb.0.get()).s_maxbytes = params.maxbytes;
+                (*sb.0.get()).s_time_gran = params.time_gran;
+                (*sb.0.get()).s_blocksize_bits = params.blocksize_bits;
+                (*sb.0.get()).s_blocksize = 1;
+                if (*sb.0.get()).s_blocksize.leading_zeros() < params.blocksize_bits.into() {
+                    return Err(EINVAL);
+                }
+                (*sb.0.get()).s_blocksize = 1 << (*sb.0.get()).s_blocksize_bits;
+                (*sb.0.get()).s_flags |= bindings::SB_RDONLY;
 
-            // N.B.: Even on failure, `kill_sb` is called and frees the data.
-            sb.0.s_fs_info = params.data.into_foreign().cast_mut();
+                // N.B.: Even on failure, `kill_sb` is called and frees the data.
+                (*sb.0.get()).s_fs_info = params.data.into_foreign().cast_mut();
+            }
 
             // SAFETY: The callback contract guarantees that `sb_ptr` is a unique pointer to a
             // newly-created (and initialised above) superblock.
@@ -917,7 +924,7 @@ impl<T: FileSystem + ?Sized> Tables<T> {
             // SAFETY: The C API guarantees that `dentry` is valid for read. `d_sb` is
             // immutable, so it's safe to read it. The superblock is guaranteed to be valid dor
             // the duration of the call.
-            let sb = unsafe { &*(*dentry).d_sb.cast::<SuperBlock<T>>() };
+            let sb = unsafe { &*(*dentry).d_sb.cast::<SuperBlock<T, InitializedSuperBlockState>>() };
             let s = T::statfs(sb)?;
 
             // SAFETY: The C API guarantees that `buf` is valid for read and write.
@@ -1299,7 +1306,7 @@ impl<T: FileSystem + ?Sized + Sync + Send> crate::InPlaceModule for Module<T> {
 ///
 /// ```
 /// # mod module_fs_sample {
-/// use kernel::fs::{DirEmitter, INode, NewSuperBlock, SuperBlock, SuperParams};
+/// use kernel::fs::{DirEmitter, INode, NweSuperBlockState, InitializedSuperBlockState, SuperBlock, SuperParams};
 /// use kernel::prelude::*;
 /// use kernel::{c_str, folio::LockedFolio, fs, types::ARef};
 ///
@@ -1316,7 +1323,7 @@ impl<T: FileSystem + ?Sized + Sync + Send> crate::InPlaceModule for Module<T> {
 ///     type Data = ();
 ///     type INodeData =();
 ///     const NAME: &'static CStr = c_str!("myfs");
-///     fn super_params(_: &NewSuperBlock<Self>) -> Result<SuperParams<Self::Data>> {
+///     fn super_params(_: &SuperBlock<Self, NewSuperBlockState>) -> Result<SuperParams<Self::Data>> {
 ///         todo!()
 ///     }
 ///     fn init_root(_sb: &SuperBlock<Self>) -> Result<ARef<INode<Self>>> {

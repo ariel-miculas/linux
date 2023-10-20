@@ -3,7 +3,7 @@
 //! PuzzleFS, a next-generation container filesystem.
 
 use kernel::fs::{
-    DirEmitter, DirEntryType, INode, INodeParams, INodeType, NewSuperBlock, SuperBlock, SuperParams,
+    DirEmitter, DirEntryType, INode, INodeParams, INodeType, InitializedSuperBlockState, NewSuperBlockState, SuperBlock, SuperParams,
 };
 use kernel::prelude::*;
 use kernel::{c_str, folio::LockedFolio, fs, time::UNIX_EPOCH, types::ARef, types::Either};
@@ -40,7 +40,7 @@ impl fs::FileSystem for PuzzleFsModule {
     type INodeData = Inode;
     const NAME: &'static CStr = c_str!("puzzlefs");
 
-    fn super_params(_sb: &NewSuperBlock<Self>) -> Result<SuperParams<Self::Data>> {
+    fn super_params(_sb: &SuperBlock<Self, NewSuperBlockState>) -> Result<SuperParams<Self::Data>> {
         let puzzlefs = PuzzleFS::open(
             c_str!("/home/puzzlefs_xattr"),
             c_str!("ed63ace21eccceabab08d89afb75e94dae47973f82a17a172396a19ea953c8ab"),
@@ -60,7 +60,7 @@ impl fs::FileSystem for PuzzleFsModule {
         })
     }
 
-    fn init_root(sb: &SuperBlock<Self>) -> Result<ARef<INode<Self>>> {
+    fn init_root(sb: &SuperBlock<Self, InitializedSuperBlockState>) -> Result<ARef<INode<Self>>> {
         match sb.get_or_create_inode(1)? {
             Either::Left(existing) => Ok(existing),
             Either::Right(new) => {
