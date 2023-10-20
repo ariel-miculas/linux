@@ -299,6 +299,13 @@ struct inode *rust_helper_d_inode(const struct dentry *dentry)
 }
 EXPORT_SYMBOL_GPL(rust_helper_d_inode);
 
+#ifndef CONFIG_NUMA
+struct folio *rust_helper_folio_alloc(gfp_t gfp, unsigned int order)
+{
+	return folio_alloc(gfp, order);
+}
+EXPORT_SYMBOL_GPL(rust_helper_folio_alloc);
+#endif
 /*
  * `bindgen` binds the C `size_t` type as the Rust `usize` type, so we can
  * use it in contexts where Rust expects a `usize` like slice (array) indices.
