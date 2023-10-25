@@ -36,6 +36,32 @@ fn mode_to_fs_type(inode: &Inode) -> Result<DirEntryType> {
     })
 }
 
+#[derive(Default)]
+struct PuzzleFsParams {
+    oci_root_dir: Option<CString>,
+    image_manifest: Option<CString>,
+}
+
+#[vtable]
+impl fs::Context<Self> for PuzzleFsModule {
+    type Data = Box<PuzzleFsParams>;
+
+    kernel::define_fs_params! {Box<PuzzleFsParams>,
+        {string, "oci_root_dir", |s, v| {
+                                      s.oci_root_dir = Some(CString::try_from_fmt(format_args!("{v}"))?);
+                                      Ok(())
+                                  }},
+        {string, "image_manifest", |s, v| {
+                                      s.image_manifest = Some(CString::try_from_fmt(format_args!("{v}"))?);
+                                      Ok(())
+                                  }},
+    }
+
+    fn try_new() -> Result<Self::Data> {
+        Ok(Box::try_new(PuzzleFsParams::default())?)
+    }
+}
+
 const DIR_FOPS: file::Ops<PuzzleFsModule> = file::Ops::new::<PuzzleFsModule>();
 const DIR_IOPS: inode::Ops<PuzzleFsModule> = inode::Ops::new::<PuzzleFsModule>();
 const FILE_AOPS: address_space::Ops<PuzzleFsModule> = address_space::Ops::new::<PuzzleFsModule>();
@@ -98,22 +124,35 @@ impl PuzzleFsModule {
 }
 
 impl fs::FileSystem for PuzzleFsModule {
+    type Context = Self;
     type Data = Box<PuzzleFS>;
     type INodeData = Inode;
     const NAME: &'static CStr = c_str!("puzzlefs");
 
     fn super_params(
-        _data: (),
+        data: Box<PuzzleFsParams>,
         _sb: &sb::SuperBlock<Self, sb::New>,
     ) -> Result<sb::Params<Box<PuzzleFS>>> {
-        let puzzlefs = PuzzleFS::open(
-            c_str!("/home/puzzlefs_xattr"),
-            c_str!("ed63ace21eccceabab08d89afb75e94dae47973f82a17a172396a19ea953c8ab"),
-        );
+        let Some(oci_root_dir) = data.oci_root_dir else {
+            pr_err!("missing oci_root_dir parameter!\n");
+            return Err(ENOTSUPP);
+        };
 
+        let Some(image_manifest) = data.image_manifest else {
+            pr_err!("missing image_manifest parameter!\n");
+            return Err(ENOTSUPP);
+        };
+
+        let puzzlefs = PuzzleFS::open(&oci_root_dir, &image_manifest);
         if let Err(ref e) = puzzlefs {
             pr_info!("error opening puzzlefs {e}\n");
         }
+
+        pr_info!(
+            "opened puzzlefs [{}]:[{}]\n",
+            &*oci_root_dir,
+            &*image_manifest
+        );
 
         let puzzlefs = puzzlefs?;
         Ok(sb::Params {
