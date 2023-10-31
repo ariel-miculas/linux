@@ -4,7 +4,7 @@
 
 use kernel::fs::{
     address_space, dentry, dentry::DEntry, file, file::DirEntryType, file::File, inode,
-    inode::INode, sb, Offset,
+    inode::INode, sb, Offset, Stat,
 };
 use kernel::prelude::*;
 use kernel::types::{ARef, Either, Locked};
@@ -22,6 +22,10 @@ kernel::module_fs! {
     description: "A next-generation container filesystem",
     license: "GPL",
 }
+
+const PUZZLEFS_BSIZE: u64 = 1 << PUZZLEFS_BSIZE_BITS;
+const PUZZLEFS_BSIZE_BITS: u8 = 12;
+const PUZZLEFS_MAGIC: u32 = 0x7a7a7570;
 
 fn mode_to_fs_type(inode: &Inode) -> Result<DirEntryType> {
     Ok(match inode.mode {
@@ -156,7 +160,7 @@ impl fs::FileSystem for PuzzleFsModule {
 
         let puzzlefs = puzzlefs?;
         Ok(sb::Params {
-            magic: 0x7a7a7570,
+            magic: PUZZLEFS_MAGIC,
             blocksize_bits: 12,
             maxbytes: fs::MAX_LFS_FILESIZE,
             time_gran: 1,
@@ -197,6 +201,19 @@ impl fs::FileSystem for PuzzleFsModule {
             return Ok(xattr.val.len());
         }
         Err(ENODATA)
+    }
+
+    fn statfs(dentry: &DEntry<Self>) -> Result<Stat> {
+        let puzzlefs = dentry.super_block().data();
+
+        Ok(Stat {
+            magic: PUZZLEFS_MAGIC,
+            namelen: i64::MAX,
+            bsize: PUZZLEFS_BSIZE as _,
+            // Round total_block_size up
+            blocks: (puzzlefs.total_block_size + PUZZLEFS_BSIZE - 1) / PUZZLEFS_BSIZE,
+            files: puzzlefs.total_inodes,
+        })
     }
 }
 

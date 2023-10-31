@@ -14,6 +14,8 @@ use kernel::str::CStr;
 pub(crate) struct PuzzleFS {
     pub(crate) oci: Image,
     layers: Vec<format::MetadataBlob>,
+    pub(crate) total_inodes: u64,
+    pub(crate) total_block_size: u64,
 }
 
 impl PuzzleFS {
@@ -22,13 +24,33 @@ impl PuzzleFS {
         let oci = Image::open(vfs_mount)?;
         let rootfs = oci.open_rootfs_blob(rootfs_path)?;
 
+        let mut total_block_size = 0;
+        let mut total_inodes: u64 = 0;
         let mut layers = Vec::new();
         for md in rootfs.metadatas.iter() {
             let digest = Digest::try_from(md)?;
-            layers.try_push(oci.open_metadata_blob(&digest)?)?;
+            let layer = oci.open_metadata_blob(&digest)?;
+
+            // This may take up too much time, but we need to implement statfs if we want to use
+            // puzzlefs as a lower filesystem in overlayfs
+            let inodes = layer.get_inode_vector()?;
+            total_inodes += u64::from(inodes.len());
+            for inode_number in 0..inodes.len() {
+                let inode = Inode::from_capnp(inodes.get(inode_number))?;
+                if let InodeMode::File { chunks } = inode.mode {
+                    total_block_size += chunks.iter().map(|chunk| chunk.len).sum::<u64>();
+                }
+            }
+
+            layers.try_push(layer)?;
         }
 
-        Ok(PuzzleFS { oci, layers })
+        Ok(PuzzleFS {
+            oci,
+            layers,
+            total_inodes,
+            total_block_size,
+        })
     }
 
     pub(crate) fn find_inode(&self, ino: u64) -> Result<Inode> {
