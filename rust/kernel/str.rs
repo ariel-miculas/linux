@@ -2,7 +2,8 @@
 
 //! String representations.
 
-use crate::alloc::{flags::*, AllocError, KVec};
+use crate::alloc::{flags::*, AllocError};
+use crate::prelude::KBox;
 use core::fmt::{self, Write};
 use core::ops::{self, Deref, DerefMut, Index};
 
@@ -811,7 +812,7 @@ impl fmt::Write for Formatter {
 /// assert_eq!(s.is_ok(), false);
 /// ```
 pub struct CString {
-    buf: KVec<u8>,
+    buf: KBox<[u8]>,
 }
 
 impl CString {
@@ -824,28 +825,35 @@ impl CString {
         let size = f.bytes_written();
 
         // Allocate a vector with the required number of bytes, and write to it.
-        let mut buf = KVec::with_capacity(size, GFP_KERNEL)?;
-        // SAFETY: The buffer stored in `buf` is at least of size `size` and is valid for writes.
-        let mut f = unsafe { Formatter::from_buffer(buf.as_mut_ptr(), size) };
+        let mut buf = KBox::<u8>::new_uninit_slice(size, GFP_KERNEL)?;
+
+        // SAFETY: The buffer stored in `buf` is `size` bytes and is valid for writes.
+        let mut f = unsafe { Formatter::from_buffer(buf.as_mut_ptr().cast::<u8>(), size) };
         f.write_fmt(args)?;
         f.write_str("\0")?;
 
-        // SAFETY: The number of bytes that can be written to `f` is bounded by `size`, which is
-        // `buf`'s capacity. The contents of the buffer have been initialised by writes to `f`.
-        unsafe { buf.set_len(f.bytes_written()) };
+        if f.bytes_written() != size {
+            // The second write resulted in a different output buffer.
+            return Err(ENOTSYNC);
+        }
 
         // Check that there are no `NUL` bytes before the end.
         // SAFETY: The buffer is valid for read because `f.bytes_written()` is bounded by `size`
-        // (which the minimum buffer size) and is non-zero (we wrote at least the `NUL` terminator)
+        // (which is the buffer size) and is non-zero (we wrote at least the `NUL` terminator)
         // so `f.bytes_written() - 1` doesn't underflow.
-        let ptr = unsafe { bindings::memchr(buf.as_ptr().cast(), 0, (f.bytes_written() - 1) as _) };
+        let ptr = unsafe {
+            bindings::memchr(buf.as_ptr().cast::<core::ffi::c_void>(), 0, (size - 1) as _)
+        };
         if !ptr.is_null() {
             return Err(EINVAL);
         }
 
         // INVARIANT: We wrote the `NUL` terminator and checked above that no other `NUL` bytes
         // exist in the buffer.
-        Ok(Self { buf })
+        // SAFETY: The buffer was initialised by the `write_fmt` and `write_char` calls above.
+        Ok(Self {
+            buf: unsafe { buf.assume_init() },
+        })
     }
 }
 
@@ -855,7 +863,7 @@ impl Deref for CString {
     fn deref(&self) -> &Self::Target {
         // SAFETY: The type invariants guarantee that the string is `NUL`-terminated and that no
         // other `NUL` bytes exist.
-        unsafe { CStr::from_bytes_with_nul_unchecked(self.buf.as_slice()) }
+        unsafe { CStr::from_bytes_with_nul_unchecked(&self.buf) }
     }
 }
 
@@ -863,21 +871,25 @@ impl DerefMut for CString {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // SAFETY: A `CString` is always NUL-terminated and contains no other
         // NUL bytes.
-        unsafe { CStr::from_bytes_with_nul_unchecked_mut(self.buf.as_mut_slice()) }
+        unsafe { CStr::from_bytes_with_nul_unchecked_mut(self.buf.as_mut()) }
     }
 }
 
-impl<'a> TryFrom<&'a CStr> for CString {
+impl TryFrom<&CStr> for CString {
     type Error = AllocError;
 
-    fn try_from(cstr: &'a CStr) -> Result<CString, AllocError> {
-        let mut buf = KVec::new();
-
-        buf.extend_from_slice(cstr.as_bytes_with_nul(), GFP_KERNEL)?;
+    fn try_from(cstr: &CStr) -> Result<CString, AllocError> {
+        let mut buf = KBox::<u8>::new_uninit_slice(cstr.len_with_nul(), GFP_KERNEL)?;
+        for (i, c) in cstr.as_bytes_with_nul().iter().enumerate() {
+            buf[i].write(*c);
+        }
 
         // INVARIANT: The `CStr` and `CString` types have the same invariants for
         // the string data, and we copied it over without changes.
-        Ok(CString { buf })
+        // SAFETY: The buffer contents were just initialised above.
+        Ok(CString {
+            buf: unsafe { buf.assume_init() },
+        })
     }
 }
 

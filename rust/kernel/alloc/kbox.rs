@@ -257,7 +257,27 @@ where
         Ok(Box(ptr.cast(), PhantomData))
     }
 
-    fn new_uninit_slice(len: usize, flags: Flags) -> Result<Box<[MaybeUninit<T>], A>, AllocError> {
+    /// Creates a new `Box<[T], A>` with uninitialized contents.
+    ///
+    /// New memory is allocated with `A`. The allocation may fail, in which case an error is
+    /// returned. For ZSTs no memory is allocated.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut values = KBox::<[u64]>::new_uninit_slice(3, GFP_KERNEL)?;
+    /// values[0].as_mut_ptr().write(1);
+    /// values[0].as_mut_ptr().write(2);
+    /// values[0].as_mut_ptr().write(3);
+    ///
+    /// values.assume_init();
+    /// assert_eq!(*values, [1,2,3])
+    /// # Ok::<(), Error>(())
+    /// ```
+    pub fn new_uninit_slice(
+        len: usize,
+        flags: Flags,
+    ) -> Result<Box<[MaybeUninit<T>], A>, AllocError> {
         let layout = core::alloc::Layout::array::<MaybeUninit<T>>(len).map_err(|_| AllocError)?;
         let ptr = A::alloc(layout, flags)?;
         let sptr = core::ptr::slice_from_raw_parts_mut(ptr.cast().as_ptr(), len);
