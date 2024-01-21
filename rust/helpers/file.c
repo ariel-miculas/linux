@@ -32,3 +32,14 @@ void rust_helper_i_gid_write(struct inode *inode, gid_t gid)
 }
 EXPORT_SYMBOL_GPL(rust_helper_i_gid_write);
 
+void rust_helper_inode_lock_shared(struct inode *inode)
+{
+    inode_lock_shared(inode);
+}
+EXPORT_SYMBOL_GPL(rust_helper_inode_lock_shared);
+
+void rust_helper_inode_unlock_shared(struct inode *inode)
+{
+    inode_unlock_shared(inode);
+}
+EXPORT_SYMBOL_GPL(rust_helper_inode_unlock_shared);
