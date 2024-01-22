@@ -58,6 +58,7 @@ pub mod time;
 pub mod transmute;
 pub mod types;
 pub mod uaccess;
+pub mod user;
 pub mod workqueue;
 
 #[doc(hidden)]
