@@ -129,3 +129,8 @@ void *rust_helper_kmap_local_folio(struct folio *folio, size_t offset)
 }
 EXPORT_SYMBOL_GPL(rust_helper_kmap_local_folio);
 
+void rust_helper_mapping_set_large_folios(struct address_space *mapping)
+{
+    mapping_set_large_folios(mapping);
+}
+EXPORT_SYMBOL_GPL(rust_helper_mapping_set_large_folios);
