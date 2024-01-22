@@ -13,3 +13,9 @@ loff_t rust_helper_i_size_read(const struct inode *inode)
     return i_size_read(inode);
 }
 EXPORT_SYMBOL_GPL(rust_helper_i_size_read);
+
+struct dentry *rust_helper_dget(struct dentry *dentry)
+{
+    return dget(dentry);
+}
+EXPORT_SYMBOL_GPL(rust_helper_dget);
