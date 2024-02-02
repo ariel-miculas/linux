@@ -6,8 +6,10 @@
 //!
 //! C headers: [`include/linux/fs.h`](srctree/include/linux/fs.h)
 
+#[cfg(CONFIG_BUFFER_HEAD)]
+use super::buffer;
 use super::inode::{self, INode, Ino};
-use super::{buffer, FileSystem, Offset};
+use super::{FileSystem, Offset};
 use crate::error::{code::*, to_result, Result};
 use crate::types::{ARef, Either, ForeignOwnable, Opaque, ScopeGuard};
 use crate::{bindings, block, build_error, folio::UniqueFolio};
