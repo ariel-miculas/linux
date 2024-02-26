@@ -103,6 +103,25 @@ impl CStr {
         unsafe { Self::from_bytes_with_nul_unchecked(bytes) }
     }
 
+    /// Like from_char_ptr, but returns a mutable reference
+    ///
+    /// # Safety
+    ///
+    /// `ptr` must be a valid pointer to a `NUL`-terminated C string, and it must
+    /// last at least `'a`. When `CStr` is alive, the memory pointed by `ptr`
+    /// must not be mutated.
+    #[inline]
+    pub unsafe fn from_char_ptr_mut<'a>(ptr: *const core::ffi::c_char) -> &'a mut Self {
+        // SAFETY: The safety precondition guarantees `ptr` is a valid pointer
+        // to a `NUL`-terminated C string.
+        let len = unsafe { bindings::strlen(ptr) } + 1;
+        // SAFETY: Lifetime guaranteed by the safety precondition.
+        let bytes = unsafe { core::slice::from_raw_parts_mut(ptr as _, len as _) };
+        // SAFETY: As `len` is returned by `strlen`, `bytes` does not contain interior `NUL`.
+        // As we have added 1 to `len`, the last byte is known to be `NUL`.
+        unsafe { Self::from_bytes_with_nul_unchecked_mut(bytes) }
+    }
+
     /// Creates a [`CStr`] from a `[u8]`.
     ///
     /// The provided slice must be `NUL`-terminated, does not contain any
@@ -136,6 +155,18 @@ impl CStr {
     /// `NUL` byte (or the string will be truncated).
     #[inline]
     pub const unsafe fn from_bytes_with_nul_unchecked(bytes: &[u8]) -> &CStr {
+        // SAFETY: Properties of `bytes` guaranteed by the safety precondition.
+        unsafe { core::mem::transmute(bytes) }
+    }
+
+    /// Like from_bytes_with_nul_unchecked, but returns a mutable reference
+    ///
+    /// # Safety
+    ///
+    /// `bytes` *must* end with a `NUL` byte, and should only have a single
+    /// `NUL` byte (or the string will be truncated).
+    #[inline]
+    pub const unsafe fn from_bytes_with_nul_unchecked_mut(bytes: &mut [u8]) -> &mut CStr {
         // SAFETY: Properties of `bytes` guaranteed by the safety precondition.
         unsafe { core::mem::transmute(bytes) }
     }
@@ -648,6 +679,7 @@ impl fmt::Debug for CString {
 
 impl ForeignOwnable for CString {
     type Borrowed<'a> = &'a CStr;
+    type BorrowedMut<'a> = &'a mut CStr;
 
     fn into_foreign(self) -> *const core::ffi::c_void {
         Box::into_raw(self.buf) as _
@@ -655,6 +687,10 @@ impl ForeignOwnable for CString {
 
     unsafe fn borrow<'a>(ptr: *const core::ffi::c_void) -> Self::Borrowed<'a> {
         unsafe { CStr::from_char_ptr(ptr.cast::<core::ffi::c_char>()) }
+    }
+
+    unsafe fn borrow_mut<'a>(ptr: *const core::ffi::c_void) -> Self::BorrowedMut<'a> {
+        unsafe { CStr::from_char_ptr_mut(ptr.cast::<core::ffi::c_char>()) }
     }
 
     unsafe fn from_foreign(ptr: *const core::ffi::c_void) -> Self {
