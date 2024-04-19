@@ -172,7 +172,7 @@ impl InodeMode {
             Ok(metadata_capnp::inode::mode::File(reader)) => {
                 let r = reader?;
                 let mut chunks = Vec::new();
-                for chunk in r.get_chunks()?.iter() {
+                for chunk in r.iter() {
                     chunks.try_push(FileChunk::from_capnp(chunk)?)?;
                 }
 
