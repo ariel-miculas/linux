@@ -113,6 +113,9 @@ pub mod flags {
     ///
     /// This is normally or'd with other flags.
     pub const __GFP_NOWARN: Flags = Flags(bindings::__GFP_NOWARN);
+
+    /// Use direct reclaim but will not use any filesystem interfaces.
+    pub const GFP_NOFS: Flags = Flags(bindings::GFP_NOFS);
 }
 
 /// The kernel's [`Allocator`] trait.
