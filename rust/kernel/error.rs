@@ -82,6 +82,8 @@ pub mod code {
     declare_err!(EIOCBQUEUED, "iocb queued, will get completion event.");
     declare_err!(ERECALLCONFLICT, "Conflict with recalled state.");
     declare_err!(ENOGRACE, "NFS file lock reclaim refused.");
+    declare_err!(ESTALE, "Stale file handle.");
+    declare_err!(EUCLEAN, "Structure needs cleaning.");
 }
 
 /// Generic integer kernel error.
