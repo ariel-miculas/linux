@@ -132,6 +132,18 @@ pub trait VecExt<T>: Sized {
     {
         self.resize_with(new_len, flags, || value.clone())
     }
+
+    /// See https://doc.rust-lang.org/std/vec/struct.Vec.html#examples-31
+    fn from_iter_fallible(
+        iter: impl Iterator<Item = T>,
+        flags: Flags,
+    ) -> Result<Vec<T>, AllocError> {
+        let mut vec = Vec::new();
+        for value in iter {
+            vec.push(value, flags)?;
+        }
+        Ok(vec)
+    }
 }
 
 impl<T> VecExt<T> for Vec<T> {
